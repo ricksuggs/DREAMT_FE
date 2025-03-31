@@ -25,8 +25,15 @@ import gpboost as gpb
 from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
 from imblearn.over_sampling import SMOTE
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from transformers import get_cosine_schedule_with_warmup
+from tqdm import tqdm  # Add this import
 from utils import *
+import math
 import warnings
+import logging
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -79,6 +86,105 @@ class LSTMPModel(nn.Module):
         return output
 
 
+class SleepTransformer(nn.Module):
+    def __init__(self, input_size, d_model=128, nhead=4, num_layers=2, dropout=0.1, max_seq_length=2000):
+        super().__init__()
+        
+        # Project input features to transformer dimension
+        self.input_proj = nn.Linear(input_size, d_model)
+        
+        # Positional encoding for temporal information
+        self.pos_encoder = PositionalEncoding(d_model, max_seq_length)
+        
+        # Transformer encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=2*d_model,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        # Output layer
+        self.fc = nn.Linear(d_model, 2)
+        
+        # Initialize parameters
+        self._init_parameters()
+    
+    def _init_parameters(self):
+        """Initialize model parameters."""
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+    
+    def forward(self, x, lengths, src_key_padding_mask=None):
+        """
+        Forward pass of the model.
+        
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape [batch_size, seq_len, input_size]
+        lengths : torch.Tensor
+            Lengths of sequences in batch
+        src_key_padding_mask : torch.Tensor, optional
+            Mask for padding tokens (True for padding positions)
+            
+        Returns
+        -------
+        torch.Tensor
+            Output tensor of shape [batch_size, seq_len, 2]
+        """
+        # Project input to transformer dimension
+        x = self.input_proj(x)
+        
+        # Add positional encoding
+        x = self.pos_encoder(x)
+        
+        # If no mask provided, create one from lengths
+        if src_key_padding_mask is None:
+            src_key_padding_mask = create_padding_mask(lengths, x.device)
+        
+        # Apply transformer with padding mask
+        x = self.transformer(x, src_key_padding_mask=src_key_padding_mask)
+        
+        # Apply final linear layer
+        x = self.fc(x)
+        
+        return x
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=2000):
+        super().__init__()
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(1, max_len, d_model)
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        """
+        Args:
+            x: Tensor, shape [batch_size, seq_len, embedding_dim]
+        """
+        return x + self.pe[:, :x.size(1)]
+
+def create_padding_mask(lengths, device):
+    """Create padding mask for transformer based on sequence lengths"""
+    # Convert lengths to tensor and move to correct device if needed
+    if not isinstance(lengths, torch.Tensor):
+        lengths = torch.tensor(lengths, device=device)
+    else:
+        lengths = lengths.to(device)
+    
+    max_len = int(lengths.max().item())
+    mask = torch.arange(max_len, device=device)[None, :] >= lengths[:, None]
+    return mask
+
+
 def LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val):
     """Train a LightGBM model using hyperparameter optimization.
     
@@ -129,10 +235,19 @@ def LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val):
         return {"loss": -f1, "status": STATUS_OK}
 
     # Run the hyperparameter search
-    trials = Trials()
-    lgb_best_hyperparams = fmin(
-        fn=objective, space=space, algo=tpe.suggest, max_evals=50, trials=trials
-    )
+    # trials = Trials()
+    # lgb_best_hyperparams = fmin(
+    #     fn=objective, space=space, algo=tpe.suggest, max_evals=50, trials=trials
+    # )
+
+    lgb_best_hyperparams = {
+        'learning_rate': 0.4979172689350684, 
+        'max_depth': 2.0,
+        'n_estimators': 290.0,
+        'num_leaves': 100.0,
+        'reg_alpha': 36.0,
+        'reg_lambda': 2.0555917249780014
+    }
     print("Best hyperparameters:", lgb_best_hyperparams)
 
     # Adjust the data types of the best hyperparameters
@@ -520,3 +635,364 @@ def LSTM_eval(lstm_model, dataloader_test, list_true_stages_test, test_name):
     plot_cm(array_predict, list_true_stages_test, test_name)
 
     return lstm_test_results_df
+
+
+def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_layers=2, learning_rate=0.0001, accumulation_steps=1):
+    """Train a Transformer model using a DataLoader with gradient accumulation and memory optimization.
+    
+    Parameters
+    ----------
+    dataloader_train : DataLoader
+        DataLoader for training data
+    num_epoch : int
+        Number of epochs to train
+    d_model : int
+        Model dimension, defaults to 128
+    nhead : int
+        Number of attention heads, defaults to 4
+    num_layers : int
+        Number of transformer layers, defaults to 2
+    learning_rate : float
+        Learning rate, defaults to 0.0001
+    accumulation_steps : int
+        Number of steps for gradient accumulation, defaults to 1
+
+    Returns
+    -------
+    model : SleepTransformer
+        Trained transformer model
+    """
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logging.info(f"Training on {device}")
+
+    try:
+        # Initialize model with improved architecture
+        input_size = 4
+        model = SleepTransformer(
+            input_size=input_size,
+            d_model=d_model,
+            nhead=nhead,
+            num_layers=num_layers,
+            dropout=0.1
+        ).to(device)
+
+        # Loss function with class weights
+        loss_function = nn.CrossEntropyLoss(
+            label_smoothing=0.1,
+            ignore_index=-100  # Ignore padding tokens
+        )
+
+        # Optimizer with better parameters
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            weight_decay=0.01
+        )
+
+        # Learning rate scheduler with warmup
+        total_steps = len(dataloader_train) * num_epoch
+        warmup_steps = total_steps // 10
+
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps
+        )
+
+        scaler = torch.cuda.amp.GradScaler(enabled=True)
+
+        # Training metrics tracking
+        best_accuracy = 0.0
+        best_loss = float('inf')
+        patience = 10
+        patience_counter = 0
+        
+        for epoch in range(num_epoch):
+            model.train()
+            total_loss = 0
+            total_accuracy = 0
+            num_batches = 0
+
+            train_iterator = tqdm(dataloader_train, desc=f'Epoch {epoch+1}/{num_epoch}')
+            
+            for i, batch in enumerate(train_iterator):
+                try:
+                    # Process batch
+                    sample = batch["sample"].to(device, non_blocking=True)
+                    length = batch["length"]
+                    label = batch["label"].to(device, non_blocking=True)
+                    attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+
+                    # Forward pass with mixed precision
+                    with torch.cuda.amp.autocast():
+                        y_pred = model(
+                            sample, 
+                            length,
+                            src_key_padding_mask=attention_mask
+                        )
+                        y_pred = y_pred.view(-1, 2)
+                        label = label.view(-1)
+                        
+                        # Calculate loss only on non-padding tokens
+                        valid_mask = (label != -100)
+                        loss = loss_function(
+                            y_pred[valid_mask],
+                            label[valid_mask]
+                        ) / accumulation_steps
+
+                    # Backward pass with gradient scaling
+                    scaler.scale(loss).backward()
+                    
+                    if (i + 1) % accumulation_steps == 0:
+                        # Gradient clipping
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        
+                        # Optimizer step
+                        scaler.step(optimizer)
+                        scaler.update()
+                        
+                        # Zero gradients
+                        optimizer.zero_grad(set_to_none=True)
+                        
+                        # Scheduler step (after optimizer)
+                        scheduler.step()
+
+                    # Update metrics
+                    total_loss += loss.item() * accumulation_steps
+                    accuracy = calculate_accuracy(y_pred[valid_mask], label[valid_mask]).item()
+                    total_accuracy += accuracy
+                    num_batches += 1
+
+                    # Update progress bar
+                    train_iterator.set_postfix({
+                        'loss': f'{loss.item():.4f}',
+                        'accuracy': f'{accuracy:.4f}',
+                        'lr': f'{scheduler.get_last_lr()[0]:.6f}'
+                    })
+
+                    # Memory cleanup
+                    del sample, label, y_pred, loss
+                    torch.cuda.empty_cache()
+
+                except RuntimeError as e:
+                    if "out of memory" in str(e):
+                        logging.error(f"GPU OOM in batch {i}. Attempting recovery...")
+                        torch.cuda.empty_cache()
+                        continue
+                    else:
+                        raise e
+
+            # Calculate epoch metrics
+            avg_loss = total_loss / num_batches
+            avg_accuracy = total_accuracy / num_batches
+
+            # Early stopping check
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                best_accuracy = avg_accuracy
+                patience_counter = 0
+            else:
+                patience_counter += 1
+
+            if patience_counter >= patience:
+                logging.info(f"Early stopping triggered after {epoch + 1} epochs")
+                break
+
+            # Log epoch metrics
+            if (epoch + 1) % 5 == 0:
+                logging.info(
+                    f"Epoch {epoch+1}/{num_epoch} - "
+                    f"Loss: {avg_loss:.4f}, "
+                    f"Accuracy: {avg_accuracy:.4f}, "
+                    f"LR: {scheduler.get_last_lr()[0]:.6f}"
+                )
+
+    except Exception as e:
+        logging.error(f"Training failed with error: {str(e)}")
+        torch.cuda.empty_cache()
+        raise e
+
+    return model
+
+def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, test_name):
+    """Evaluate a Transformer model using a DataLoader.
+    
+    Parameters
+    ----------
+    transformer_model : SleepTransformer
+        The trained transformer model
+    dataloader_test : DataLoader
+        DataLoader containing test data
+    list_true_stages_test : list
+        List of true labels for test data
+    test_name : str
+        Name of the test for logging
+        
+    Returns
+    -------
+    DataFrame
+        Results dataframe containing evaluation metrics
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    transformer_model.eval()
+    transformer_model.to(device)
+
+    predicted_probabilities_test = []
+    kappa = []
+    valid_predictions = []
+    valid_labels = []
+
+    with torch.no_grad():
+        for batch in dataloader_test:
+            # Get data from batch
+            sample = batch["sample"].to(device)
+            length = batch["length"]
+            label = batch["label"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+
+            # Forward pass with attention mask
+            outputs = transformer_model(
+                sample, 
+                length,
+                src_key_padding_mask=attention_mask
+            )
+            
+            # Get valid predictions (ignore padding)
+            valid_mask = ~attention_mask  # Convert to boolean mask
+            batch_size = outputs.size(0)
+            
+            for b in range(batch_size):
+                # Get sequence length for this sample
+                seq_len = length[b].item()
+                
+                # Get valid predictions and labels for this sequence
+                valid_pred = outputs[b, :seq_len].cpu().numpy()
+                valid_lab = label[b, :seq_len].cpu().numpy()
+                
+                # Store valid predictions and labels
+                valid_predictions.append(valid_pred)
+                valid_labels.append(valid_lab)
+                
+                # Calculate kappa for this sequence
+                kappa.append(
+                    cohen_kappa_score(
+                        valid_lab,
+                        valid_pred.argmax(axis=-1)
+                    )
+                )
+
+    # Concatenate all valid predictions and labels
+    array_predict = np.concatenate(valid_predictions)
+    array_true = np.concatenate(valid_labels)
+
+    # Calculate metrics using only valid predictions
+    transformer_test_results_df = calculate_metrics(
+        array_true, 
+        array_predict, 
+        test_name
+    )
+    transformer_test_results_df["Cohen's Kappa"] = np.mean(kappa)
+    
+    # Plot confusion matrix
+    plot_cm(array_predict, valid_labels, test_name)
+
+    return transformer_test_results_df
+
+def Transformer_dataloader(list_probabilities_subject, lengths, list_true_stages, batch_size=16):
+    """Create a DataLoader for Transformer models.
+    
+    Parameters
+    ----------
+    list_probabilities_subject : list
+        List of predicted probabilities for each subject
+    lengths : list
+        List of sequence lengths
+    list_true_stages : list
+        List of true labels
+    batch_size : int, optional
+        Batch size for training, defaults to 16
+        
+    Returns
+    -------
+    DataLoader
+        DataLoader configured for Transformer input
+    """
+    class TransformerDataset(Dataset):
+        def __init__(self, probabilities, lengths, labels):
+            self.probabilities = probabilities
+            self.lengths = lengths
+            self.labels = labels
+            self.max_len = max(lengths)
+
+        def __len__(self):
+            return len(self.probabilities)
+
+        def __getitem__(self, idx):
+            prob = self.probabilities[idx]
+            length = self.lengths[idx]
+            label = self.labels[idx]
+
+            # Pad sequences
+            if prob.shape[0] < self.max_len:
+                pad_length = self.max_len - prob.shape[0]
+                prob_pad = np.pad(
+                    prob, 
+                    ((0, pad_length), (0, 0)), 
+                    mode='constant'
+                )
+                label_pad = np.pad(
+                    label, 
+                    (0, pad_length), 
+                    mode='constant', 
+                    constant_values=-100
+                )
+            else:
+                prob_pad = prob
+                label_pad = label
+
+            # Create attention mask (False for real tokens, True for padding)
+            attention_mask = torch.arange(self.max_len) >= length
+
+            return {
+                'sample': torch.FloatTensor(prob_pad),
+                'length': length,
+                'label': torch.LongTensor(label_pad),
+                'attention_mask': attention_mask
+            }
+
+    def collate_fn(batch):
+        """Custom collate function for transformer batches."""
+        batch_size = len(batch)
+        max_len = max(item['length'] for item in batch)
+        
+        # Prepare tensors
+        samples = torch.stack([item['sample'] for item in batch])
+        lengths = torch.tensor([item['length'] for item in batch])
+        labels = torch.stack([item['label'] for item in batch])
+        attention_masks = torch.stack([item['attention_mask'] for item in batch])
+        
+        return {
+            'sample': samples,
+            'length': lengths,
+            'label': labels,
+            'attention_mask': attention_masks
+        }
+
+    # Create dataset and dataloader
+    dataset = TransformerDataset(
+        list_probabilities_subject,
+        lengths,
+        list_true_stages
+    )
+    
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        pin_memory=True,
+        num_workers=2
+    )
