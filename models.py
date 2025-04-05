@@ -630,7 +630,16 @@ def LSTM_eval(lstm_model, dataloader_test, list_true_stages_test, test_name):
     return lstm_test_results_df
 
 
-def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_layers=2, learning_rate=0.0001, accumulation_steps=1, dropout=0.1):
+def Transformer_engine(
+        dataloader_train, 
+        num_epoch, 
+        d_model=128, 
+        nhead=4, 
+        num_layers=2, 
+        learning_rate=0.0001, 
+        accumulation_steps=1, 
+        dropout=0.1
+        ):
     """Train a Transformer model using a DataLoader with gradient accumulation and memory optimization.
     
     Parameters
@@ -671,22 +680,22 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
 
         # Loss function with class weights
         loss_function = nn.CrossEntropyLoss(
-            label_smoothing=0.1,
+            label_smoothing=0.15,
             ignore_index=-100  # Ignore padding tokens
         )
 
-        # Optimizer with better parameters
+        # Use higher weight decay for better regularization
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=learning_rate,
             betas=(0.9, 0.999),
             eps=1e-8,
-            weight_decay=0.01
+            weight_decay=0.02  # Increased from 0.01
         )
 
-        # Learning rate scheduler with warmup
+        # Adjust warmup steps and learning rate schedule
         total_steps = len(dataloader_train) * num_epoch
-        warmup_steps = total_steps // 10
+        warmup_steps = total_steps // 20  # Reduced warmup period to 5% of total steps
 
         scheduler = get_cosine_schedule_with_warmup(
             optimizer,
