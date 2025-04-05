@@ -1,5 +1,4 @@
 # Core libraries
-python==3.10.13
 torch==2.1.2
 torchvision==0.16.2
 scipy==1.11.3
