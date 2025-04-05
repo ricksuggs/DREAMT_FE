@@ -534,6 +534,8 @@ def calculate_kappa(list_probabilities_subject, list_true_stages):
 
 
 def plot_cm(list_probabilities_subject, list_true_stages, model_name):
+
+    return
     """
     Plot the confusion matrix of a model's prediction.
 
@@ -586,6 +588,7 @@ def plot_cm(list_probabilities_subject, list_true_stages, model_name):
 def plot_by_subject_predicted_labels(
     sid, features, predicted_df, sigma=10, show_label=True
 ):
+    return
     sid_df = pd.read_csv(
         "/features_df/{}_domain_features_df.csv".format(
             sid
