@@ -87,7 +87,7 @@ class LSTMPModel(nn.Module):
 
 
 class SleepTransformer(nn.Module):
-    def __init__(self, input_size, d_model=128, nhead=4, num_layers=2, dropout=0.1, max_seq_length=2000):
+    def __init__(self, input_size, d_model=128, nhead=4, num_layers=2, dropout=0.5, max_seq_length=2000):  # Increased dropout
         super().__init__()
         
         # Project input features to transformer dimension
@@ -112,6 +112,9 @@ class SleepTransformer(nn.Module):
         
         # Initialize parameters
         self._init_parameters()
+        
+        self.dropout = nn.Dropout(dropout)
+        self.layer_norm = nn.LayerNorm(d_model)
     
     def _init_parameters(self):
         """Initialize model parameters."""
@@ -139,6 +142,9 @@ class SleepTransformer(nn.Module):
         """
         # Project input to transformer dimension
         x = self.input_proj(x)
+        
+        x = self.layer_norm(x)  # Add layer normalization
+        x = self.dropout(x)     # Add dropout
         
         # Add positional encoding
         x = self.pos_encoder(x)
