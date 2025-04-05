@@ -26,3 +26,4 @@ pyarrow==19.0.1
 tornado
 pyzmq==25.1.1
 pytorch-lightning==2.1.0
+gpboost
