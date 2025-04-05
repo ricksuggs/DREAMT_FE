@@ -87,7 +87,7 @@ class LSTMPModel(nn.Module):
 
 
 class SleepTransformer(nn.Module):
-    def __init__(self, input_size, d_model=128, nhead=4, num_layers=2, dropout=0.5, max_seq_length=2000):  # Increased dropout
+    def __init__(self, input_size, d_model=512, nhead=8, num_layers=6, dropout=0.2, max_seq_length=2000):
         super().__init__()
         
         # Project input features to transformer dimension
@@ -96,68 +96,55 @@ class SleepTransformer(nn.Module):
         # Positional encoding for temporal information
         self.pos_encoder = PositionalEncoding(d_model, max_seq_length)
         
-        # Transformer encoder
+        # Transformer encoder with increased capacity
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
-            dim_feedforward=2*d_model,
+            dim_feedforward=4*d_model,  # Increased from 2*d_model
             dropout=dropout,
             batch_first=True,
             norm_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
-        # Output layer
-        self.fc = nn.Linear(d_model, 2)
+        # Additional layers for better feature extraction
+        self.layer_norm1 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.fc1 = nn.Linear(d_model, d_model)
+        self.layer_norm2 = nn.LayerNorm(d_model)
+        self.dropout2 = nn.Dropout(dropout)
+        self.fc2 = nn.Linear(d_model, 2)
         
         # Initialize parameters
         self._init_parameters()
-        
-        self.dropout = nn.Dropout(dropout)
-        self.layer_norm = nn.LayerNorm(d_model)
     
     def _init_parameters(self):
-        """Initialize model parameters."""
+        """Initialize model parameters with improved initialization."""
         for p in self.parameters():
             if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+                nn.init.kaiming_normal_(p, mode='fan_out')
     
     def forward(self, x, lengths, src_key_padding_mask=None):
-        """
-        Forward pass of the model.
-        
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input tensor of shape [batch_size, seq_len, input_size]
-        lengths : torch.Tensor
-            Lengths of sequences in batch
-        src_key_padding_mask : torch.Tensor, optional
-            Mask for padding tokens (True for padding positions)
-            
-        Returns
-        -------
-        torch.Tensor
-            Output tensor of shape [batch_size, seq_len, 2]
-        """
         # Project input to transformer dimension
         x = self.input_proj(x)
-        
-        x = self.layer_norm(x)  # Add layer normalization
-        x = self.dropout(x)     # Add dropout
+        x = self.layer_norm1(x)
+        x = self.dropout1(x)
         
         # Add positional encoding
         x = self.pos_encoder(x)
         
-        # If no mask provided, create one from lengths
+        # Create padding mask if not provided
         if src_key_padding_mask is None:
             src_key_padding_mask = create_padding_mask(lengths, x.device)
         
         # Apply transformer with padding mask
         x = self.transformer(x, src_key_padding_mask=src_key_padding_mask)
         
-        # Apply final linear layer
-        x = self.fc(x)
+        # Additional feature processing
+        x = self.layer_norm2(x)
+        x = self.dropout2(x)
+        x = F.gelu(self.fc1(x))
+        x = self.fc2(x)
         
         return x
 

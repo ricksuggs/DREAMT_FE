@@ -89,11 +89,19 @@ shap_values = explainer.shap_values(X_train)
 # lgb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM')
 
 logging.info("Creating Transformer dataset for LightGBM")
-dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
 dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
 logging.info("Running Transformer model for LightGBM post-processing")
-transformer_model = Transformer_engine(dataloader_train, num_epoch=300)
+transformer_model = Transformer_engine(
+    dataloader_train, 
+    num_epoch=300, 
+    d_model=512,  # Increased from 128
+    nhead=8,      # Increased from 4
+    num_layers=6, # Increased from 2 
+    learning_rate=0.0001,
+    accumulation_steps=2
+)
 lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
 
 # logging.info("Running GPBoost model")
