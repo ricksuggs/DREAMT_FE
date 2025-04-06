@@ -100,20 +100,15 @@ class SleepTransformer(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
-            dim_feedforward=4*d_model,  # Increased from 2*d_model
+            dim_feedforward=2*d_model,  # Reverted to original
             dropout=dropout,
             batch_first=True,
             norm_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
-        # Additional layers for better feature extraction
-        self.layer_norm1 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
-        self.fc1 = nn.Linear(d_model, d_model)
-        self.layer_norm2 = nn.LayerNorm(d_model)
-        self.dropout2 = nn.Dropout(dropout)
-        self.fc2 = nn.Linear(d_model, 2)
+        # Output layers
+        self.fc = nn.Linear(d_model, 2)
         
         # Initialize parameters
         self._init_parameters()
@@ -127,8 +122,6 @@ class SleepTransformer(nn.Module):
     def forward(self, x, lengths, src_key_padding_mask=None):
         # Project input to transformer dimension
         x = self.input_proj(x)
-        x = self.layer_norm1(x)
-        x = self.dropout1(x)
         
         # Add positional encoding
         x = self.pos_encoder(x)
@@ -141,10 +134,7 @@ class SleepTransformer(nn.Module):
         x = self.transformer(x, src_key_padding_mask=src_key_padding_mask)
         
         # Additional feature processing
-        x = self.layer_norm2(x)
-        x = self.dropout2(x)
-        x = F.gelu(self.fc1(x))
-        x = self.fc2(x)
+        x = self.fc(x)
         
         return x
 
@@ -706,7 +696,6 @@ def Transformer_engine(
         scaler = torch.cuda.amp.GradScaler(enabled=True)
 
         # Training metrics tracking
-        best_accuracy = 0.0
         best_loss = float('inf')
         patience = 10
         patience_counter = 0
@@ -794,7 +783,6 @@ def Transformer_engine(
             # Early stopping check
             if avg_loss < best_loss:
                 best_loss = avg_loss
-                best_accuracy = avg_accuracy
                 patience_counter = 0
             else:
                 patience_counter += 1
@@ -844,23 +832,16 @@ def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, 
 
     predicted_probabilities_test = []
     kappa = []
-    valid_predictions = []
-    valid_labels = []
 
     with torch.no_grad():
         for batch in dataloader_test:
             # Get data from batch
             sample = batch["sample"].to(device)
             length = batch["length"]
-            label = batch["label"].to(device)
             attention_mask = batch["attention_mask"].to(device)
 
             # Forward pass with attention mask
-            outputs = transformer_model(
-                sample, 
-                length,
-                src_key_padding_mask=attention_mask
-            )
+            outputs = transformer_model(sample, length, src_key_padding_mask=attention_mask)
             
             # Get valid predictions (ignore padding)
             valid_mask = ~attention_mask  # Convert to boolean mask
@@ -870,27 +851,23 @@ def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, 
                 # Get sequence length for this sample
                 seq_len = length[b].item()
                 
-                # Get valid predictions and labels for this sequence
+                # Get valid predictions for this sequence
                 valid_pred = outputs[b, :seq_len].cpu().numpy()
-                valid_lab = label[b, :seq_len].cpu().numpy()
                 
-                # Store valid predictions and labels
-                valid_predictions.append(valid_pred)
-                valid_labels.append(valid_lab)
+                # Store valid predictions
+                predicted_probabilities_test.append(valid_pred)
                 
-                # Calculate kappa for this sequence
-                kappa.append(
-                    cohen_kappa_score(
-                        valid_lab,
-                        valid_pred.argmax(axis=-1)
-                    )
-                )
+                # Calculate kappa for this sequence using original true labels
+                kappa.append(cohen_kappa_score(
+                    list_true_stages_test[b], 
+                    valid_pred.argmax(axis=-1)
+                ))
 
-    # Concatenate all valid predictions and labels
-    array_predict = np.concatenate(valid_predictions)
-    array_true = np.concatenate(valid_labels)
+    # Concatenate all valid predictions
+    array_predict = np.concatenate(predicted_probabilities_test)
+    array_true = np.concatenate(list_true_stages_test)
 
-    # Calculate metrics using only valid predictions
+    # Calculate metrics using original true labels
     transformer_test_results_df = calculate_metrics(
         array_true, 
         array_predict, 
@@ -898,8 +875,8 @@ def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, 
     )
     transformer_test_results_df["Cohen's Kappa"] = np.mean(kappa)
     
-    # Plot confusion matrix
-    plot_cm(array_predict, valid_labels, test_name)
+    # Plot confusion matrix using original true labels
+    plot_cm(array_predict, list_true_stages_test, test_name)
 
     return transformer_test_results_df
 
