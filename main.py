@@ -1,3 +1,10 @@
+
+# To run in Google Colab, uncomment the following lines
+# from google.colab import drive
+# drive.mount('/content/drive')
+# %cd /content/drive/MyDrive/DREAMT_FE-dreamt_time_series_transformer/
+# !pip install -r requirements.txt
+
 # load packages
 import pandas as pd
 import numpy as np
@@ -18,7 +25,6 @@ warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
-
 
 
 # Prepare the data
