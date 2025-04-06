@@ -96,11 +96,12 @@ logging.info("Running Transformer model for LightGBM post-processing")
 transformer_model = Transformer_engine(
     dataloader_train, 
     num_epoch=300, 
-    d_model=768,      # Increased from 512 to capture more complex patterns
-    nhead=12,         # Increased from 8 for better multi-head attention
-    num_layers=8,     # Increased from 6 for deeper feature extraction
-    learning_rate=0.0003,  # Increased initial learning rate
-    accumulation_steps=4   # Increased from 2 for better gradient estimates
+    d_model=128,      # Reverted to original size
+    nhead=4,          # Reverted to original heads
+    num_layers=2,     # Reverted to original layers
+    learning_rate=0.0001,  # More conservative learning rate
+    accumulation_steps=1,  # Remove accumulation since dataset is small
+    dropout=0.2       # Keep moderate dropout
 )
 lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
 
