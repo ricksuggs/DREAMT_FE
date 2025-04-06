@@ -79,20 +79,16 @@ explainer = shap.TreeExplainer(final_lgb_model)
 shap_values = explainer.shap_values(X_train)
 # shap.summary_plot(shap_values, X_train, plot_type="bar", feature_names=final_features)
 
-# logging.info("Creating train data for LSTM")
-# dataloader_train = LSTM_dataloader(
-#     prob_ls_train, len_train, true_ls_train, batch_size=32
-# )
+logging.info("Creating train data for LSTM")
+dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
 
-# logging.info("Running LSTM model")
-# LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
+logging.info("Running LSTM model")
+LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
 
-# logging.info("Testing LSTM model")
-# dataloader_test = LSTM_dataloader(
-#     prob_ls_test, len_test, true_ls_test, batch_size=1
-# )
+logging.info("Testing LSTM model")
+dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-# lgb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM')
+lgb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM')
 
 logging.info("Creating Transformer dataset for LightGBM")
 dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
@@ -102,51 +98,43 @@ logging.info("Running Transformer model for LightGBM post-processing")
 transformer_model = Transformer_engine(dataloader_train, num_epoch=300)
 lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
 
-# logging.info("Running GPBoost model")
-# final_gpb_model = GPBoost_engine(X_train_resampled, group_train_resampled, y_train_resampled, X_val, y_val, group_val)
+logging.info("Running GPBoost model")
+final_gpb_model = GPBoost_engine(X_train_resampled, group_train_resampled, y_train_resampled, X_val, y_val, group_val)
 
-# logging.info("Calculating training scores for GPBoost model")
-# prob_ls_train, len_train, true_ls_train = compute_probabilities(
-#     train_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
-# gpb_train_results_df = GPBoost_result(final_gpb_model, X_train, y_train, group_train, prob_ls_train, true_ls_train)
+logging.info("Calculating training scores for GPBoost model")
+prob_ls_train, len_train, true_ls_train = compute_probabilities(
+    train_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
+gpb_train_results_df = GPBoost_result(final_gpb_model, X_train, y_train, group_train, prob_ls_train, true_ls_train)
 
-# logging.info("Calculating testing scores for GPBoost model")
-# prob_ls_test, len_test, true_ls_test = compute_probabilities(
-#     test_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
-# gpb_test_results_df = GPBoost_result(final_gpb_model, X_test, y_test, group_test, prob_ls_test, true_ls_test)
+logging.info("Calculating testing scores for GPBoost model")
+prob_ls_test, len_test, true_ls_test = compute_probabilities(
+    test_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
+gpb_test_results_df = GPBoost_result(final_gpb_model, X_test, y_test, group_test, prob_ls_test, true_ls_test)
 
-# logging.info("Creating LSTM dataset for GPBoost")
-# dataloader_train = LSTM_dataloader(
-#     prob_ls_train, len_train, true_ls_train, batch_size=32
-# )
-# dataloader_test = LSTM_dataloader(
-#     prob_ls_test, len_test, true_ls_test, batch_size=1
-# )
+logging.info("Creating LSTM dataset for GPBoost")
+dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
+dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-# logging.info("Running LSTM model for GPBoost")
-# LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate = 0.001)
-# gpb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM')
+logging.info("Running LSTM model for GPBoost")
+LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate = 0.001)
+gpb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM')
 
-# logging.info("Running Transformer model for GPBoost post-processing")
-# transformer_model = Transformer_engine(
-#     dataloader_train, 
-#     num_epoch=300, 
-#     d_model=128,
-#     nhead=4,
-#     num_layers=2,
-#     learning_rate=0.001,
-#     accumulation_steps=8
-# )
-# gpb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'GPBoost_Transformer')
+logging.info("Creating Transformer dataset for GPBoost post-processing")
+dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+
+logging.info("Running Transformer model for GPBoost post-processing")
+transformer_model = Transformer_engine(dataloader_train, num_epoch=150)
+gpb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'GPBoost_Transformer')
 
 # overall result
 overall_result = pd.concat([
     lgb_test_results_df, 
-    # lgb_lstm_test_results_df,
+    lgb_lstm_test_results_df,
     lgb_transformer_test_results_df,
-    # gpb_test_results_df, 
-    # gpb_lstm_test_results_df,
-    # gpb_transformer_test_results_df
+    gpb_test_results_df, 
+    gpb_lstm_test_results_df,
+    gpb_transformer_test_results_df
 ])
 print(group_variable)
 print(overall_result)
