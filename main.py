@@ -89,7 +89,7 @@ shap_values = explainer.shap_values(X_train)
 # lgb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM')
 
 logging.info("Creating Transformer dataset for LightGBM")
-dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
+dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
 dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
 logging.info("Running Transformer model for LightGBM post-processing")

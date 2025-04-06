@@ -808,24 +808,7 @@ def Transformer_engine(
     return model
 
 def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, test_name):
-    """Evaluate a Transformer model using a DataLoader.
-    
-    Parameters
-    ----------
-    transformer_model : SleepTransformer
-        The trained transformer model
-    dataloader_test : DataLoader
-        DataLoader containing test data
-    list_true_stages_test : list
-        List of true labels for test data
-    test_name : str
-        Name of the test for logging
-        
-    Returns
-    -------
-    DataFrame
-        Results dataframe containing evaluation metrics
-    """
+    """Evaluate a Transformer model using a DataLoader."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transformer_model.eval()
     transformer_model.to(device)
@@ -834,7 +817,7 @@ def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, 
     kappa = []
 
     with torch.no_grad():
-        for batch in dataloader_test:
+        for batch_idx, batch in enumerate(dataloader_test):
             # Get data from batch
             sample = batch["sample"].to(device)
             length = batch["length"]
@@ -851,21 +834,32 @@ def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, 
                 # Get sequence length for this sample
                 seq_len = length[b].item()
                 
-                # Get valid predictions for this sequence
-                valid_pred = outputs[b, :seq_len].cpu().numpy()
+                # Apply valid mask to get only non-padded predictions
+                valid_pred = outputs[b][valid_mask[b]].cpu().numpy()
                 
                 # Store valid predictions
                 predicted_probabilities_test.append(valid_pred)
                 
-                # Calculate kappa for this sequence using original true labels
-                kappa.append(cohen_kappa_score(
-                    list_true_stages_test[b], 
-                    valid_pred.argmax(axis=-1)
-                ))
+                # Get true labels for this sequence
+                true_labels = list_true_stages_test[batch_idx][:seq_len]
+                pred_labels = valid_pred.argmax(axis=-1)
+                
+                # No need for length matching since we used valid_mask
+                try:
+                    kappa_score = cohen_kappa_score(true_labels, pred_labels)
+                    kappa.append(kappa_score)
+                except Exception as e:
+                    logging.warning(f"Failed to calculate kappa for sequence {batch_idx}: {str(e)}")
+                    continue
 
     # Concatenate all valid predictions
     array_predict = np.concatenate(predicted_probabilities_test)
     array_true = np.concatenate(list_true_stages_test)
+
+    # Ensure lengths match before final metrics calculation
+    min_len = min(len(array_true), len(array_predict))
+    array_true = array_true[:min_len]
+    array_predict = array_predict[:min_len]
 
     # Calculate metrics using original true labels
     transformer_test_results_df = calculate_metrics(
@@ -873,7 +867,11 @@ def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, 
         array_predict, 
         test_name
     )
-    transformer_test_results_df["Cohen's Kappa"] = np.mean(kappa)
+    
+    if kappa:  # Only calculate mean if we have valid kappa scores
+        transformer_test_results_df["Cohen's Kappa"] = np.mean(kappa)
+    else:
+        transformer_test_results_df["Cohen's Kappa"] = np.nan
     
     # Plot confusion matrix using original true labels
     plot_cm(array_predict, list_true_stages_test, test_name)
