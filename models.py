@@ -25,8 +25,6 @@ import gpboost as gpb
 from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
 from imblearn.over_sampling import SMOTE
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from transformers import get_cosine_schedule_with_warmup
 from tqdm import tqdm  # Add this import
 from utils import *
 import math
@@ -38,6 +36,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 np.random.seed(1)
 
