@@ -643,8 +643,8 @@ def LSTM_eval(lstm_model, dataloader_test, list_true_stages_test, test_name):
     return lstm_test_results_df
 
 
-def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_layers=2, learning_rate=0.0001, accumulation_steps=1, dropout=0.1):
-    """Train a Transformer model using a DataLoader with gradient accumulation and memory optimization.
+def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_layers=2, learning_rate=0.0001, dropout=0.1):
+    """Train a Transformer model using a DataLoader.
     
     Parameters
     ----------
@@ -660,9 +660,9 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
         Number of transformer layers, defaults to 2
     learning_rate : float
         Learning rate, defaults to 0.0001
-    accumulation_steps : int
-        Number of steps for gradient accumulation, defaults to 1
-
+    dropout : float
+        Dropout rate, defaults to 0.1
+    
     Returns
     -------
     model : SleepTransformer
@@ -672,7 +672,7 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
     logging.info(f"Training on {device}")
 
     try:
-        # Initialize model with improved architecture
+        # Initialize model
         input_size = 4
         model = SleepTransformer(
             input_size=input_size,
@@ -682,38 +682,27 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
             dropout=dropout
         ).to(device)
 
-        # Loss function with class weights
+        # Simple cross entropy loss with label smoothing
         loss_function = nn.CrossEntropyLoss(
             label_smoothing=0.1,
             ignore_index=-100  # Ignore padding tokens
         )
 
-        # Optimizer with better parameters
+        # AdamW optimizer
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=learning_rate,
-            betas=(0.9, 0.999),
-            eps=1e-8,
             weight_decay=0.01
         )
 
-        # Learning rate scheduler with warmup
-        total_steps = len(dataloader_train) * num_epoch
-        warmup_steps = total_steps // 10
-
-        scheduler = get_cosine_schedule_with_warmup(
+        # Learning rate scheduler
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            num_warmup_steps=warmup_steps,
-            num_training_steps=total_steps
+            max_lr=learning_rate,
+            epochs=num_epoch,
+            steps_per_epoch=len(dataloader_train),
+            pct_start=0.1
         )
-
-        scaler = torch.cuda.amp.GradScaler(enabled=True)
-
-        # Training metrics tracking
-        best_accuracy = 0.0
-        best_loss = float('inf')
-        patience = 10
-        patience_counter = 0
         
         for epoch in range(num_epoch):
             model.train()
@@ -723,92 +712,56 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
 
             train_iterator = tqdm(dataloader_train, desc=f'Epoch {epoch+1}/{num_epoch}')
             
-            for i, batch in enumerate(train_iterator):
-                try:
-                    # Process batch
-                    sample = batch["sample"].to(device, non_blocking=True)
-                    length = batch["length"]
-                    label = batch["label"].to(device, non_blocking=True)
-                    attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+            for batch in train_iterator:
+                # Process batch
+                sample = batch["sample"].to(device)
+                length = batch["length"]
+                label = batch["label"].to(device)
+                attention_mask = batch["attention_mask"].to(device)
 
-                    # Forward pass with mixed precision
-                    with torch.cuda.amp.autocast():
-                        y_pred = model(
-                            sample, 
-                            length,
-                            src_key_padding_mask=attention_mask
-                        )
-                        y_pred = y_pred.view(-1, 2)
-                        label = label.view(-1)
-                        
-                        # Calculate loss only on non-padding tokens
-                        valid_mask = (label != -100)
-                        loss = loss_function(
-                            y_pred[valid_mask],
-                            label[valid_mask]
-                        ) / accumulation_steps
+                # Clear gradients
+                optimizer.zero_grad(set_to_none=True)
 
-                    # Backward pass with gradient scaling
-                    scaler.scale(loss).backward()
-                    
-                    if (i + 1) % accumulation_steps == 0:
-                        # Gradient clipping
-                        scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                        
-                        # Optimizer step
-                        scaler.step(optimizer)
-                        scaler.update()
-                        
-                        # Zero gradients
-                        optimizer.zero_grad(set_to_none=True)
-                        
-                        # Scheduler step (after optimizer)
-                        scheduler.step()
+                # Forward pass
+                y_pred = model(sample, length, src_key_padding_mask=attention_mask)
+                y_pred = y_pred.view(-1, 2)
+                label = label.view(-1)
+                
+                # Calculate loss only on non-padding tokens
+                valid_mask = (label != -100)
+                loss = loss_function(y_pred[valid_mask], label[valid_mask])
 
-                    # Update metrics
-                    total_loss += loss.item() * accumulation_steps
-                    accuracy = calculate_accuracy(y_pred[valid_mask], label[valid_mask]).item()
-                    total_accuracy += accuracy
-                    num_batches += 1
+                # Backward pass
+                loss.backward()
+                
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
+                # Optimizer and scheduler steps
+                optimizer.step()
+                scheduler.step()
 
-                    # Update progress bar
-                    train_iterator.set_postfix({
-                        'loss': f'{loss.item():.4f}',
-                        'accuracy': f'{accuracy:.4f}',
-                        'lr': f'{scheduler.get_last_lr()[0]:.6f}'
-                    })
+                # Update metrics
+                total_loss += loss.item()
+                accuracy = calculate_accuracy(y_pred[valid_mask], label[valid_mask]).item()
+                total_accuracy += accuracy
+                num_batches += 1
 
-                    # Memory cleanup
-                    del sample, label, y_pred, loss
-                    torch.cuda.empty_cache()
+                # Update progress bar
+                train_iterator.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'accuracy': f'{accuracy:.4f}',
+                    'lr': f'{scheduler.get_last_lr()[0]:.6f}'
+                })
 
-                except RuntimeError as e:
-                    if "out of memory" in str(e):
-                        logging.error(f"GPU OOM in batch {i}. Attempting recovery...")
-                        torch.cuda.empty_cache()
-                        continue
-                    else:
-                        raise e
-
-            # Calculate epoch metrics
-            avg_loss = total_loss / num_batches
-            avg_accuracy = total_accuracy / num_batches
-
-            # Early stopping check
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                best_accuracy = avg_accuracy
-                patience_counter = 0
-            else:
-                patience_counter += 1
-
-            if patience_counter >= patience:
-                logging.info(f"Early stopping triggered after {epoch + 1} epochs")
-                break
+                # Memory cleanup
+                del sample, label, y_pred, loss
+                torch.cuda.empty_cache()
 
             # Log epoch metrics
             if (epoch + 1) % 5 == 0:
+                avg_loss = total_loss / num_batches
+                avg_accuracy = total_accuracy / num_batches
                 logging.info(
                     f"Epoch {epoch+1}/{num_epoch} - "
                     f"Loss: {avg_loss:.4f}, "
