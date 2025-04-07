@@ -776,87 +776,72 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
     return model
 
 def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, test_name):
-    """Evaluate a Transformer model using a DataLoader.
-    
-    Parameters
-    ----------
-    transformer_model : SleepTransformer
-        The trained transformer model
-    dataloader_test : DataLoader
-        DataLoader containing test data
-    list_true_stages_test : list
-        List of true labels for test data
-    test_name : str
-        Name of the test for logging
-        
-    Returns
-    -------
-    DataFrame
-        Results dataframe containing evaluation metrics
-    """
+    """Evaluate a Transformer model using a DataLoader."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transformer_model.eval()
     transformer_model.to(device)
 
     predicted_probabilities_test = []
+    valid_true_labels = []
     kappa = []
-    valid_predictions = []
-    valid_labels = []
-
+    
+    seq_idx = 0
+    
     with torch.no_grad():
         for batch in dataloader_test:
             # Get data from batch
             sample = batch["sample"].to(device)
-            length = batch["length"]
-            label = batch["label"].to(device)
             attention_mask = batch["attention_mask"].to(device)
-
+            lengths = batch["length"]
+            
             # Forward pass with attention mask
             outputs = transformer_model(
                 sample, 
-                length,
+                lengths,
                 src_key_padding_mask=attention_mask
             )
             
-            # Get valid predictions (ignore padding)
-            valid_mask = ~attention_mask  # Convert to boolean mask
             batch_size = outputs.size(0)
-            
             for b in range(batch_size):
                 # Get sequence length for this sample
-                seq_len = length[b].item()
+                seq_len = lengths[b].item()
+                true_labels = list_true_stages_test[seq_idx][:seq_len]  # Truncate to sequence length
                 
-                # Get valid predictions and labels for this sequence
-                valid_pred = outputs[b, :seq_len].cpu().numpy()
-                valid_lab = label[b, :seq_len].cpu().numpy()
+                # Use attention mask to get valid predictions
+                valid_positions = ~attention_mask[b, :seq_len]  # Only use positions up to sequence length
+                valid_pred = outputs[b, :seq_len][valid_positions].cpu().numpy()
                 
-                # Store valid predictions and labels
-                valid_predictions.append(valid_pred)
-                valid_labels.append(valid_lab)
+                # Ensure predictions and true labels have same length
+                min_len = min(len(true_labels), len(valid_pred))
+                true_labels = true_labels[:min_len]
+                valid_pred = valid_pred[:min_len]
                 
-                # Calculate kappa for this sequence
-                kappa.append(
-                    cohen_kappa_score(
-                        valid_lab,
-                        valid_pred.argmax(axis=-1)
-                    )
-                )
+                # Store predictions and labels
+                predicted_probabilities_test.append(valid_pred)
+                valid_true_labels.append(true_labels)
+                
+                # Calculate kappa using matched lengths
+                pred_labels = valid_pred.argmax(axis=-1)
+                kappa.append(cohen_kappa_score(true_labels, pred_labels))
+                
+                seq_idx += 1
 
-    # Concatenate all valid predictions and labels
-    array_predict = np.concatenate(valid_predictions)
-    array_true = np.concatenate(valid_labels)
+    # Concatenate predictions and true labels
+    array_predict = np.concatenate([p.argmax(axis=-1) for p in predicted_probabilities_test])
+    array_true = np.concatenate(valid_true_labels)
+    array_probabilities = np.concatenate(predicted_probabilities_test)
 
-    # Calculate metrics using only valid predictions
+    # Calculate metrics using both predictions and probabilities
     transformer_test_results_df = calculate_metrics(
         array_true, 
-        array_predict, 
+        array_probabilities,  # Use probabilities for metrics that need them
         test_name
     )
     transformer_test_results_df["Cohen's Kappa"] = np.mean(kappa)
     
-    # Plot confusion matrix
-    plot_cm(array_predict, valid_labels, test_name)
-
+    # Plot confusion matrix using predictions
+    plot_cm(array_predict, array_true, test_name)
+    
     return transformer_test_results_df
 
 def Transformer_dataloader(list_probabilities_subject, lengths, list_true_stages, batch_size=16):
