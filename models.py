@@ -636,31 +636,16 @@ def LSTM_eval(lstm_model, dataloader_test, list_true_stages_test, test_name):
     return lstm_test_results_df
 
 
-def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_layers=2, learning_rate=0.0001, dropout=0.1):
-    """Train a Transformer model using a DataLoader.
-    
-    Parameters
-    ----------
-    dataloader_train : DataLoader
-        DataLoader for training data
-    num_epoch : int
-        Number of epochs to train
-    d_model : int
-        Model dimension, defaults to 128
-    nhead : int
-        Number of attention heads, defaults to 4
-    num_layers : int
-        Number of transformer layers, defaults to 2
-    learning_rate : float
-        Learning rate, defaults to 0.0001
-    dropout : float
-        Dropout rate, defaults to 0.1
-    
-    Returns
-    -------
-    model : SleepTransformer
-        Trained transformer model
-    """
+def Transformer_engine(
+    dataloader_train, 
+    num_epoch, 
+    d_model=128,
+    nhead=4,
+    num_layers=2,
+    learning_rate=0.0001,
+    dropout=0.5
+):
+    """Train a Transformer model using a DataLoader."""
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     logging.info(f"Training on {device}")
 
@@ -675,27 +660,34 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
             dropout=dropout
         ).to(device)
 
-        # Simple cross entropy loss with label smoothing
+        # Loss function with label smoothing
         loss_function = nn.CrossEntropyLoss(
-            label_smoothing=0.1,
-            ignore_index=-100  # Ignore padding tokens
+            label_smoothing=0.2,
+            ignore_index=-100
         )
 
-        # AdamW optimizer
+        # Optimizer with weight decay
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=learning_rate,
-            weight_decay=0.01
+            weight_decay=0.1
         )
 
-        # Learning rate scheduler
+        # Learning rate scheduler - fixed from incorrect import
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=learning_rate,
             epochs=num_epoch,
             steps_per_epoch=len(dataloader_train),
-            pct_start=0.1
+            pct_start=0.2,
+            div_factor=25,
+            final_div_factor=1000
         )
+
+        # Add early stopping
+        best_loss = float('inf')
+        patience = 10
+        patience_counter = 0
         
         for epoch in range(num_epoch):
             model.train()
@@ -715,7 +707,7 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
                 # Clear gradients
                 optimizer.zero_grad(set_to_none=True)
 
-                # Forward pass
+                # Forward pass with stronger regularization
                 y_pred = model(sample, length, src_key_padding_mask=attention_mask)
                 y_pred = y_pred.view(-1, 2)
                 label = label.view(-1)
@@ -728,9 +720,8 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
                 loss.backward()
                 
                 # Gradient clipping
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # Reduced from 1.0
                 
-                # Optimizer and scheduler steps
                 optimizer.step()
                 scheduler.step()
 
@@ -740,20 +731,30 @@ def Transformer_engine(dataloader_train, num_epoch, d_model=128, nhead=4, num_la
                 total_accuracy += accuracy
                 num_batches += 1
 
-                # Update progress bar
                 train_iterator.set_postfix({
                     'loss': f'{loss.item():.4f}',
                     'accuracy': f'{accuracy:.4f}',
                     'lr': f'{scheduler.get_last_lr()[0]:.6f}'
                 })
 
-                # Memory cleanup
                 del sample, label, y_pred, loss
                 torch.cuda.empty_cache()
 
-            # Log epoch metrics
+            # Calculate average loss
+            avg_loss = total_loss / num_batches
+            
+            # Early stopping check
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                
+            if patience_counter >= patience:
+                logging.info(f"Early stopping triggered at epoch {epoch+1}")
+                break
+
             if (epoch + 1) % 5 == 0:
-                avg_loss = total_loss / num_batches
                 avg_accuracy = total_accuracy / num_batches
                 logging.info(
                     f"Epoch {epoch+1}/{num_epoch} - "
