@@ -95,7 +95,14 @@ dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_trai
 dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
 logging.info("Running Transformer model for LightGBM post-processing")
-transformer_model = Transformer_engine(dataloader_train, num_epoch=300, d_model=256, nhead=8, num_layers=4, dropout=0.3)
+transformer_model = Transformer_engine(
+    dataloader_train, 
+    num_epoch=300,
+    d_model=128,    # Smaller model
+    nhead=4,        # Fewer heads
+    num_layers=2,   # Fewer layers
+    dropout=0.5     # More dropout
+)
 lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
 
 # logging.info("Running GPBoost model")
