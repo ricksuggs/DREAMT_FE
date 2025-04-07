@@ -111,15 +111,24 @@ class SleepTransformer(nn.Module):
         
         # Initialize parameters
         self._init_parameters()
-        
-        self.dropout = nn.Dropout(dropout)
-        self.layer_norm = nn.LayerNorm(d_model)
     
     def _init_parameters(self):
         """Initialize model parameters."""
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+
+    def _create_padding_mask(lengths, device):
+        """Create padding mask for transformer based on sequence lengths"""
+        # Convert lengths to tensor and move to correct device if needed
+        if not isinstance(lengths, torch.Tensor):
+            lengths = torch.tensor(lengths, device=device)
+        else:
+            lengths = lengths.to(device)
+        
+        max_len = int(lengths.max().item())
+        mask = torch.arange(max_len, device=device)[None, :] >= lengths[:, None]
+        return mask
     
     def forward(self, x, lengths, src_key_padding_mask=None):
         """
@@ -142,15 +151,12 @@ class SleepTransformer(nn.Module):
         # Project input to transformer dimension
         x = self.input_proj(x)
         
-        x = self.layer_norm(x)  # Add layer normalization
-        x = self.dropout(x)     # Add dropout
-        
         # Add positional encoding
         x = self.pos_encoder(x)
         
         # If no mask provided, create one from lengths
         if src_key_padding_mask is None:
-            src_key_padding_mask = create_padding_mask(lengths, x.device)
+            src_key_padding_mask = self._create_padding_mask(lengths, x.device)
         
         # Apply transformer with padding mask
         x = self.transformer(x, src_key_padding_mask=src_key_padding_mask)
@@ -176,18 +182,6 @@ class PositionalEncoding(nn.Module):
             x: Tensor, shape [batch_size, seq_len, embedding_dim]
         """
         return x + self.pe[:, :x.size(1)]
-
-def create_padding_mask(lengths, device):
-    """Create padding mask for transformer based on sequence lengths"""
-    # Convert lengths to tensor and move to correct device if needed
-    if not isinstance(lengths, torch.Tensor):
-        lengths = torch.tensor(lengths, device=device)
-    else:
-        lengths = lengths.to(device)
-    
-    max_len = int(lengths.max().item())
-    mask = torch.arange(max_len, device=device)[None, :] >= lengths[:, None]
-    return mask
 
 
 def LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val):
