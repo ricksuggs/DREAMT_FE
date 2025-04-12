@@ -28,6 +28,8 @@ gpboost
 shap
 lightgbm
 hyperopt
-neurokit
 heartpy
 imblearn
+neurokit2
+aeon
+tsai==0.4.0

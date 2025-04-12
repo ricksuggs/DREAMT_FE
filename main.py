@@ -94,16 +94,27 @@ logging.info("Creating Transformer dataset for LightGBM")
 dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
 dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-logging.info("Running Transformer model for LightGBM post-processing")
-transformer_model = Transformer_engine(
+# logging.info("Running Transformer model for LightGBM post-processing")
+# transformer_model = Transformer_engine(
+#     dataloader_train, 
+#     num_epoch=300,
+#     d_model=128,    # Smaller model
+#     nhead=4,        # Fewer heads
+#     num_layers=2,   # Fewer layers
+#     dropout=0.5     # More dropout
+# )
+# lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
+
+logging.info("Running TST model for LightGBM post-processing")
+tst_model = TST_engine(
     dataloader_train, 
     num_epoch=300,
-    d_model=128,    # Smaller model
-    nhead=4,        # Fewer heads
-    num_layers=2,   # Fewer layers
-    dropout=0.5     # More dropout
+    d_model=128,
+    nhead=4,
+    num_layers=2,
+    dropout=0.5
 )
-lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
+lgb_tst_test_results_df = Transformer_eval(tst_model, dataloader_test, true_ls_test, 'LightGBM_TST')
 
 # logging.info("Running GPBoost model")
 # final_gpb_model = GPBoost_engine(X_train_resampled, group_train_resampled, y_train_resampled, X_val, y_val, group_val)
@@ -138,7 +149,8 @@ lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader
 overall_result = pd.concat([
     lgb_test_results_df, 
     # lgb_lstm_test_results_df,
-    lgb_transformer_test_results_df,
+    # lgb_transformer_test_results_df,
+    lgb_tst_test_results_df,
     # gpb_test_results_df, 
     # gpb_lstm_test_results_df,
     # gpb_transformer_test_results_df

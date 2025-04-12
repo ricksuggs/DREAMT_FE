@@ -30,6 +30,8 @@ from utils import *
 import math
 import warnings
 import logging
+from tsai.models.TST import TST
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -183,6 +185,31 @@ class PositionalEncoding(nn.Module):
         """
         return x + self.pe[:, :x.size(1)]
 
+class SleepTST(nn.Module):
+    """Time Series Transformer implementation from tsai library."""
+    
+    def __init__(self, input_size, d_model=128, nhead=4, num_layers=2, dropout=0.5, max_seq_length=2000):
+        super().__init__()
+        
+        # TST expects input shape: [batch_size, variables, seq_len]
+        self.tst = TST(
+            c_in=input_size,          # Number of input features (4)
+            seq_len=max_seq_length,   # Maximum sequence length
+            c_out=2,                  # Binary classification
+            n_layers=num_layers,
+            d_model=d_model,
+            n_heads=nhead,
+            d_ff=d_model*4,
+            dropout=dropout,
+            fc_dropout=dropout
+        )
+    
+    def forward(self, x, lengths=None, src_key_padding_mask=None):
+        """Forward pass of the model."""
+
+        x = x.transpose(1, 2)
+
+        return self.tst(x, src_key_padding_mask)
 
 def LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val):
     """Train a LightGBM model using hyperparameter optimization.
@@ -934,3 +961,135 @@ def Transformer_dataloader(list_probabilities_subject, lengths, list_true_stages
         pin_memory=True,
         num_workers=2
     )
+
+def TST_engine(
+    dataloader_train, 
+    num_epoch, 
+    d_model=128,
+    nhead=4,
+    num_layers=2,
+    learning_rate=0.0001,
+    dropout=0.5
+):
+    """Train a Time Series Transformer model."""
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logging.info(f"Training TST on {device}")
+
+    try:
+        # Initialize TST model
+        input_size = 4
+        model = SleepTST(
+            input_size=input_size,
+            d_model=d_model,
+            nhead=nhead,
+            num_layers=num_layers,
+            dropout=dropout
+        ).to(device)
+
+        # Use same training configuration as SleepTransformer for fair comparison
+        loss_function = nn.CrossEntropyLoss(
+            label_smoothing=0.2,
+            ignore_index=-100
+        )
+
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=0.1
+        )
+
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=learning_rate,
+            epochs=num_epoch,
+            steps_per_epoch=len(dataloader_train),
+            pct_start=0.2,
+            div_factor=25,
+            final_div_factor=1000
+        )
+
+        # Training loop same as SleepTransformer
+        best_loss = float('inf')
+        patience = 10
+        patience_counter = 0
+        
+        for epoch in range(num_epoch):
+            model.train()
+            total_loss = 0
+            total_accuracy = 0
+            num_batches = 0
+
+            train_iterator = tqdm(dataloader_train, desc=f'Epoch {epoch+1}/{num_epoch}')
+            
+            for batch in train_iterator:
+                # Process batch
+                sample = batch["sample"].to(device)
+                length = batch["length"]
+                label = batch["label"].to(device)
+                attention_mask = batch["attention_mask"].to(device)
+
+                # Clear gradients
+                optimizer.zero_grad(set_to_none=True)
+
+                # Forward pass with stronger regularization
+                y_pred = model(sample, length, src_key_padding_mask=attention_mask)
+                y_pred = y_pred.view(-1, 2)
+                label = label.view(-1)
+                
+                # Calculate loss only on non-padding tokens
+                valid_mask = (label != -100)
+                loss = loss_function(y_pred[valid_mask], label[valid_mask])
+
+                # Backward pass
+                loss.backward()
+                
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # Reduced from 1.0
+                
+                optimizer.step()
+                scheduler.step()
+
+                # Update metrics
+                total_loss += loss.item()
+                accuracy = calculate_accuracy(y_pred[valid_mask], label[valid_mask]).item()
+                total_accuracy += accuracy
+                num_batches += 1
+
+                train_iterator.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'accuracy': f'{accuracy:.4f}',
+                    'lr': f'{scheduler.get_last_lr()[0]:.6f}'
+                })
+
+                del sample, label, y_pred, loss
+                torch.cuda.empty_cache()
+
+            # Calculate average loss
+            avg_loss = total_loss / num_batches
+            
+            # Early stopping check
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                
+            if patience_counter >= patience:
+                logging.info(f"Early stopping triggered at epoch {epoch+1}")
+                break
+
+            if (epoch + 1) % 5 == 0:
+                avg_accuracy = total_accuracy / num_batches
+                logging.info(
+                    f"Epoch {epoch+1}/{num_epoch} - "
+                    f"Loss: {avg_loss:.4f}, "
+                    f"Accuracy: {avg_accuracy:.4f}, "
+                    f"LR: {scheduler.get_last_lr()[0]:.6f}"
+                )
+
+    except Exception as e:
+        logging.error(f"TST training failed with error: {str(e)}")
+        torch.cuda.empty_cache()
+        raise e
+
+    return model
