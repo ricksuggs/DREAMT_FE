@@ -30,7 +30,10 @@ from utils import *
 import math
 import warnings
 import logging
-from tsai.models.TST import TST
+from tsai.all import Categorize, TSDatasets, TSClassifier, TSDataLoaders, TSStandardize, TST, Learner, LabelSmoothingCrossEntropyFlat, RocAucBinary
+from fastai.callback.tracker import EarlyStoppingCallback
+from fastai.metrics import accuracy
+from typing import List, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -184,32 +187,6 @@ class PositionalEncoding(nn.Module):
             x: Tensor, shape [batch_size, seq_len, embedding_dim]
         """
         return x + self.pe[:, :x.size(1)]
-
-class SleepTST(nn.Module):
-    """Time Series Transformer implementation from tsai library."""
-    
-    def __init__(self, input_size, d_model=128, nhead=4, num_layers=2, dropout=0.5, max_seq_length=2000):
-        super().__init__()
-        
-        # TST expects input shape: [batch_size, variables, seq_len]
-        self.tst = TST(
-            c_in=input_size,          # Number of input features (4)
-            seq_len=max_seq_length,   # Maximum sequence length
-            c_out=2,                  # Binary classification
-            n_layers=num_layers,
-            d_model=d_model,
-            n_heads=nhead,
-            d_ff=d_model*4,
-            dropout=dropout,
-            fc_dropout=dropout
-        )
-    
-    def forward(self, x, lengths=None, src_key_padding_mask=None):
-        """Forward pass of the model."""
-
-        x = x.transpose(1, 2)
-
-        return self.tst(x, src_key_padding_mask)
 
 def LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val):
     """Train a LightGBM model using hyperparameter optimization.
@@ -962,134 +939,220 @@ def Transformer_dataloader(list_probabilities_subject, lengths, list_true_stages
         num_workers=2
     )
 
-def TST_engine(
-    dataloader_train, 
-    num_epoch, 
-    d_model=128,
-    nhead=4,
-    num_layers=2,
-    learning_rate=0.0001,
-    dropout=0.5
-):
-    """Train a Time Series Transformer model."""
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    logging.info(f"Training TST on {device}")
-
-    try:
-        # Initialize TST model
-        input_size = 4
-        model = SleepTST(
-            input_size=input_size,
-            d_model=d_model,
-            nhead=nhead,
-            num_layers=num_layers,
-            dropout=dropout
-        ).to(device)
-
-        # Use same training configuration as SleepTransformer for fair comparison
-        loss_function = nn.CrossEntropyLoss(
-            label_smoothing=0.2,
-            ignore_index=-100
-        )
-
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=learning_rate,
-            weight_decay=0.1
-        )
-
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=learning_rate,
-            epochs=num_epoch,
-            steps_per_epoch=len(dataloader_train),
-            pct_start=0.2,
-            div_factor=25,
-            final_div_factor=1000
-        )
-
-        # Training loop same as SleepTransformer
-        best_loss = float('inf')
-        patience = 10
-        patience_counter = 0
+class SleepTSDatasets:
+    """Wrapper to create tsai compatible datasets."""
+    
+    def __init__(self, 
+                 probabilities: List[np.ndarray], 
+                 lengths: List[int], 
+                 labels: List[np.ndarray],
+                 max_len: Optional[int] = None):
+        """
+        Parameters
+        ----------
+        probabilities : List[np.ndarray]
+            List of probability sequences for each subject
+        lengths : List[int]
+            List of sequence lengths
+        labels : List[np.ndarray]
+            List of label sequences
+        max_len : int, optional
+            Maximum sequence length for padding
+        """
+        # Use provided max_len or compute from current set
+        self.max_len = max_len if max_len is not None else max(lengths)
+        n_samples = len(probabilities)
+        n_vars = probabilities[0].shape[1]
         
-        for epoch in range(num_epoch):
-            model.train()
-            total_loss = 0
-            total_accuracy = 0
-            num_batches = 0
-
-            train_iterator = tqdm(dataloader_train, desc=f'Epoch {epoch+1}/{num_epoch}')
-            
-            for batch in train_iterator:
-                # Process batch
-                sample = batch["sample"].to(device)
-                length = batch["length"]
-                label = batch["label"].to(device)
-                attention_mask = batch["attention_mask"].to(device)
-
-                # Clear gradients
-                optimizer.zero_grad(set_to_none=True)
-
-                # Forward pass with stronger regularization
-                y_pred = model(sample, length, src_key_padding_mask=attention_mask)
-                y_pred = y_pred.view(-1, 2)
-                label = label.view(-1)
-                
-                # Calculate loss only on non-padding tokens
-                valid_mask = (label != -100)
-                loss = loss_function(y_pred[valid_mask], label[valid_mask])
-
-                # Backward pass
-                loss.backward()
-                
-                # Gradient clipping
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # Reduced from 1.0
-                
-                optimizer.step()
-                scheduler.step()
-
-                # Update metrics
-                total_loss += loss.item()
-                accuracy = calculate_accuracy(y_pred[valid_mask], label[valid_mask]).item()
-                total_accuracy += accuracy
-                num_batches += 1
-
-                train_iterator.set_postfix({
-                    'loss': f'{loss.item():.4f}',
-                    'accuracy': f'{accuracy:.4f}',
-                    'lr': f'{scheduler.get_last_lr()[0]:.6f}'
-                })
-
-                del sample, label, y_pred, loss
-                torch.cuda.empty_cache()
-
-            # Calculate average loss
-            avg_loss = total_loss / num_batches
-            
-            # Early stopping check
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                patience_counter = 0
+        # Initialize arrays with consistent max_len
+        X = np.zeros((n_samples, n_vars, self.max_len))
+        y = []  # Store labels in list first
+        
+        # Fill arrays with data
+        for i, (prob, length, label) in enumerate(zip(probabilities, lengths, labels)):
+            # Handle features (X)
+            if length > self.max_len:
+                X[i, :, :] = prob[:self.max_len].T
+                label = label[:self.max_len]
             else:
-                patience_counter += 1
-                
-            if patience_counter >= patience:
-                logging.info(f"Early stopping triggered at epoch {epoch+1}")
-                break
+                X[i, :, :length] = prob[:length].T
+            
+            # Convert labels to integers and use majority class
+            label_ints = label.astype(np.int64)
+            counts = np.bincount(label_ints)
+            y.append(int(np.argmax(counts)))  # Convert to Python int
+        
+        # Convert labels to numpy array of Python ints
+        y = np.array(y, dtype=np.int32)
+        
+        # Create tsai datasets
+        tfms = [None, [Categorize()]]
+        self.dsets = TSDatasets(X, y, tfms=tfms)
 
-            if (epoch + 1) % 5 == 0:
-                avg_accuracy = total_accuracy / num_batches
-                logging.info(
-                    f"Epoch {epoch+1}/{num_epoch} - "
-                    f"Loss: {avg_loss:.4f}, "
-                    f"Accuracy: {avg_accuracy:.4f}, "
-                    f"LR: {scheduler.get_last_lr()[0]:.6f}"
-                )
-
+def TST_learner(
+    train_probabilities: List[np.ndarray],
+    train_lengths: List[int],
+    train_labels: List[np.ndarray],
+    val_probabilities: List[np.ndarray],
+    val_lengths: List[int],
+    val_labels: List[np.ndarray],
+    d_model: int = 128,
+    nhead: int = 4,
+    num_layers: int = 2,
+    dropout: float = 0.5,
+    fc_dropout: float = 0.9,
+    batch_size: int = 16,
+    num_epochs: int = 50,
+    learning_rate: float = 1e-4
+) -> Learner:
+    """Create and train a TST model using tsai's Learner."""
+    try:
+        # Determine max sequence length from both train and val sets
+        max_len = max(max(train_lengths), max(val_lengths))
+        
+        # Create datasets with consistent max_len
+        train_datasets = SleepTSDatasets(
+            train_probabilities, 
+            train_lengths, 
+            train_labels,
+            max_len=max_len
+        )
+        val_datasets = SleepTSDatasets(
+            val_probabilities, 
+            val_lengths, 
+            val_labels,
+            max_len=max_len
+        )
+        
+        # Create dataloaders with standardization
+        dls = TSDataLoaders.from_dsets(
+            train_datasets.dsets,
+            val_datasets.dsets,
+            bs=batch_size,
+            batch_tfms=TSStandardize(by_var=True)
+        )
+        
+        # Create TST model
+        model = TST(
+            c_in=dls.vars,
+            c_out=dls.c,
+            seq_len=dls.len,
+            n_layers=num_layers,
+            d_model=d_model,
+            n_heads=nhead,
+            d_ff=d_model*4,
+            dropout=dropout,
+            fc_dropout=fc_dropout
+        )
+        
+        # Create learner with only accuracy metric
+        learn = Learner(
+            dls, 
+            model,
+            loss_func=LabelSmoothingCrossEntropyFlat(),
+            metrics=[accuracy],  # Removed RocAucBinary() metric
+            cbs=[
+                EarlyStoppingCallback(monitor='valid_loss', patience=10)
+            ]
+        )
+        
+        # Train model
+        logging.info("Training TST model...")
+        learn.fit_one_cycle(
+            num_epochs,
+            learning_rate,
+            wd=0.01
+        )
+        
+        return learn
+        
     except Exception as e:
         logging.error(f"TST training failed with error: {str(e)}")
-        torch.cuda.empty_cache()
         raise e
 
-    return model
+def TST_eval(
+    learner: Learner,
+    test_probabilities: List[np.ndarray],
+    test_lengths: List[int],
+    true_labels: List[np.ndarray],
+    test_name: str
+) -> pd.DataFrame:
+    """Evaluate TST model performance."""
+    logging.info("Getting predictions from TST model")
+    predictions = []
+    kappa_scores = []
+    processed_true_labels = []
+    
+    # Add input logging
+    logging.info(f"Number of test sequences: {len(test_probabilities)}")
+    logging.info(f"Test lengths range: {min(test_lengths)} to {max(test_lengths)}")
+    
+    # Process each sequence
+    for i, (prob, length) in enumerate(zip(test_probabilities, test_lengths)):
+        # Prepare input tensor
+        curr_len = min(length, learner.dls.len)
+        X = np.zeros((1, prob.shape[1], learner.dls.len))
+        X[0, :, :curr_len] = prob[:curr_len].T
+        X_torch = torch.FloatTensor(X)
+        
+        logging.info(f"\nProcessing sequence {i}:")
+        logging.info(f"Input shape: {X.shape}")
+        
+        # Get predictions
+        learner.model.eval()
+        with torch.no_grad():
+            device = next(learner.model.parameters()).device
+            X_torch = X_torch.to(device)
+            
+            # Get model output and convert to probabilities
+            output = learner.model(X_torch)
+            logging.info(f"Output shape: {output.shape}")
+
+            # Get sequence probabilities and expand to full length
+            seq_probs = torch.softmax(output, dim=-1)[0].cpu().numpy()
+            seq_predictions = np.repeat(seq_probs[np.newaxis, :], curr_len, axis=0)
+            
+            logging.info(f"Sequence probabilities shape: {seq_probs.shape}")
+            logging.info(f"Expanded predictions shape: {seq_predictions.shape}")
+
+            # Get binary predictions for current sequence
+            pred_labels = seq_predictions.argmax(axis=-1)
+            
+            # Calculate kappa for this sequence using truncated labels
+            true_seq = true_labels[i][:curr_len]
+            kappa = cohen_kappa_score(true_seq, pred_labels)
+            kappa_scores.append(kappa)
+            
+            # Store predictions and corresponding true labels
+            predictions.append(seq_predictions)
+            processed_true_labels.append(true_seq)
+    
+    # Log details before final concatenation
+    logging.info("\nPreparing final predictions:")
+    logging.info(f"Number of sequences: {len(predictions)}")
+    logging.info(f"Prediction shapes: {[p.shape for p in predictions]}")
+    logging.info(f"True label shapes: {[t.shape for t in processed_true_labels]}")
+    
+    # Prepare final predictions and true labels
+    array_predict = np.concatenate([p.argmax(axis=-1) for p in predictions])
+    array_true = np.concatenate(processed_true_labels)
+    array_probabilities = np.concatenate(predictions)
+    
+    # Verify lengths match
+    assert len(array_true) == len(array_predict), f"Length mismatch: true={len(array_true)}, pred={len(array_predict)}"
+    
+    # Log final shapes and values
+    logging.info("\nFinal arrays:")
+    logging.info(f"Predictions shape: {array_predict.shape}")
+    logging.info(f"True labels shape: {array_true.shape}")
+    logging.info(f"Probabilities shape: {array_probabilities.shape}")
+    logging.info(f"Sample predictions: {array_predict[:10]}")
+    logging.info(f"Sample true labels: {array_true[:10]}")
+    logging.info(f"Sample probabilities: {array_probabilities[:5]}")
+    
+    # Calculate metrics and add kappa
+    logging.info("\nCalculating metrics...")
+    results_df = calculate_metrics(array_true, array_probabilities, test_name)
+    results_df["Cohen's Kappa"] = np.mean(kappa_scores)
+    
+    return results_df
