@@ -33,46 +33,51 @@ quality_df_dir = './results/quality_scores_per_subject.csv'
 features_dir = "dataset_sample/features_df/"
 info_dir = "dataset_sample/participant_info.csv"
 
-logging.info("Preparing the data")
-clean_df, new_features, good_quality_sids = data_preparation(
-    threshold = 0.2, 
-    quality_df_dir = quality_df_dir,
-    features_dir = features_dir,
-    info_dir = info_dir)
+# logging.info("Preparing the data")
+# clean_df, new_features, good_quality_sids = data_preparation(
+#     threshold = 0.2, 
+#     quality_df_dir = quality_df_dir,
+#     features_dir = features_dir,
+#     info_dir = info_dir)
 
-logging.info("Splitting data into train, validation, and test sets")
-SW_df, final_features = split_data(clean_df, good_quality_sids, new_features)
+# logging.info("Splitting data into train, validation, and test sets")
+# SW_df, final_features = split_data(clean_df, good_quality_sids, new_features)
 
-random.seed(0)
-train_sids = random.sample(good_quality_sids, 56)
-remaining_sids = [subj for subj in good_quality_sids if subj not in train_sids]
-val_sids = random.sample(remaining_sids, 8)
-test_sids = [subj for subj in remaining_sids if subj not in val_sids]
+# random.seed(0)
+# train_sids = random.sample(good_quality_sids, 56)
+# remaining_sids = [subj for subj in good_quality_sids if subj not in train_sids]
+# val_sids = random.sample(remaining_sids, 8)
+# test_sids = [subj for subj in remaining_sids if subj not in val_sids]
 
-group_variables = ["AHI_Severity", "Obesity"]
-# when idx == 0, it returns ['AHI_Severity'], the first variable in the list
-# when idx == 1, it returns ['Obesity'], the second variable in the list
-group_variable = get_variable(group_variables, idx=0)
+# group_variables = ["AHI_Severity", "Obesity"]
+# # when idx == 0, it returns ['AHI_Severity'], the first variable in the list
+# # when idx == 1, it returns ['Obesity'], the second variable in the list
+# group_variable = get_variable(group_variables, idx=0)
 
-X_train, y_train, group_train = train_test_split(SW_df, train_sids, final_features, group_variable)
-X_val, y_val, group_val = train_test_split(SW_df, val_sids, final_features, group_variable)
-X_test, y_test, group_test = train_test_split(SW_df, test_sids, final_features, group_variable)
+# X_train, y_train, group_train = train_test_split(SW_df, train_sids, final_features, group_variable)
+# X_val, y_val, group_val = train_test_split(SW_df, val_sids, final_features, group_variable)
+# X_test, y_test, group_test = train_test_split(SW_df, test_sids, final_features, group_variable)
 
-logging.info("Resampling the training data")
-X_train_resampled, y_train_resampled, group_train_resampled = resample_data(X_train, y_train, group_train, group_variable)
+# logging.info("Resampling the training data")
+# X_train_resampled, y_train_resampled, group_train_resampled = resample_data(X_train, y_train, group_train, group_variable)
 
-logging.info("Running LightGBM model")
-final_lgb_model = LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val)
+# logging.info("Running LightGBM model")
+# final_lgb_model = LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val)
 
-logging.info("Calculating training scores for LightGBM model")
-prob_ls_train, len_train, true_ls_train = compute_probabilities(
-    train_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable)
-lgb_train_results_df = LightGBM_result(final_lgb_model, X_train, y_train, prob_ls_train, true_ls_train)
+# logging.info("Calculating training scores for LightGBM model")
+# prob_ls_train, len_train, true_ls_train = compute_probabilities(
+#     train_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable)
+# lgb_train_results_df = LightGBM_result(final_lgb_model, X_train, y_train, prob_ls_train, true_ls_train)
 
-logging.info("Calculating testing scores for LightGBM model")
-prob_ls_test, len_test, true_ls_test = compute_probabilities(
-    test_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable)
-lgb_test_results_df = LightGBM_result(final_lgb_model, X_test, y_test, prob_ls_test, true_ls_test)
+# logging.info("Calculating validation scores for LightGBM model")
+# prob_ls_val, len_val, true_ls_val = compute_probabilities(
+#     val_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable
+# )
+
+# logging.info("Calculating testing scores for LightGBM model")
+# prob_ls_test, len_test, true_ls_test = compute_probabilities(
+#     test_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable)
+# lgb_test_results_df = LightGBM_result(final_lgb_model, X_test, y_test, prob_ls_test, true_ls_test)
 
 # logging.info("Identifying best features using SHAP")
 # explainer = shap.TreeExplainer(final_lgb_model)
@@ -90,9 +95,9 @@ lgb_test_results_df = LightGBM_result(final_lgb_model, X_test, y_test, prob_ls_t
 
 # lgb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM')
 
-logging.info("Creating Transformer dataset for LightGBM")
-dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
-dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+# logging.info("Creating Transformer dataset for LightGBM")
+# dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+# dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
 # logging.info("Running Transformer model for LightGBM post-processing")
 # transformer_model = Transformer_engine(
@@ -105,16 +110,53 @@ dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, b
 # )
 # lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
 
-logging.info("Running TST model for LightGBM post-processing")
-tst_model = TST_engine(
-    dataloader_train, 
-    num_epoch=300,
-    d_model=128,
-    nhead=4,
-    num_layers=2,
-    dropout=0.5
+
+# logging.info("Saving tensors for TST model")
+# torch.save(
+#     {
+#         'train_probabilities': prob_ls_train,
+#         'train_lengths': len_train,
+#         'train_labels': true_ls_train,
+#         'val_probabilities': prob_ls_val,
+#         'val_lengths': len_val,
+#         'val_labels': true_ls_val,
+#         'test_probabilities': prob_ls_test,
+#         'test_lengths': len_test,
+#         'test_labels': true_ls_test
+#     },
+#     'tst_data.pt'
+# )
+
+logging.info("Loading tensors for TST model")
+tst_data = torch.load('tst_data.pt')
+prob_ls_train = tst_data['train_probabilities']
+len_train = tst_data['train_lengths']
+true_ls_train = tst_data['train_labels']
+prob_ls_val = tst_data['val_probabilities']
+len_val = tst_data['val_lengths']
+true_ls_val = tst_data['val_labels']
+prob_ls_test = tst_data['test_probabilities']
+true_ls_test = tst_data['test_labels']
+len_test = tst_data['test_lengths']
+
+logging.info("Running TST model with tsai Learner")
+tst_learner = TST_learner(
+    train_probabilities=prob_ls_train,
+    train_lengths=len_train,
+    train_labels=true_ls_train,
+    val_probabilities=prob_ls_val,
+    val_lengths=len_val,
+    val_labels=true_ls_val
 )
-lgb_tst_test_results_df = Transformer_eval(tst_model, dataloader_test, true_ls_test, 'LightGBM_TST')
+
+# Use TST_eval instead of calculate_metrics directly
+lgb_tst_test_results_df = TST_eval(
+    learner=tst_learner,
+    test_probabilities=prob_ls_test,
+    test_lengths=len_test,
+    true_labels=true_ls_test,
+    test_name='LightGBM_TST'
+)
 
 # logging.info("Running GPBoost model")
 # final_gpb_model = GPBoost_engine(X_train_resampled, group_train_resampled, y_train_resampled, X_val, y_val, group_val)
@@ -147,7 +189,7 @@ lgb_tst_test_results_df = Transformer_eval(tst_model, dataloader_test, true_ls_t
 
 # overall result
 overall_result = pd.concat([
-    lgb_test_results_df, 
+    # lgb_test_results_df, 
     # lgb_lstm_test_results_df,
     # lgb_transformer_test_results_df,
     lgb_tst_test_results_df,
@@ -155,5 +197,5 @@ overall_result = pd.concat([
     # gpb_lstm_test_results_df,
     # gpb_transformer_test_results_df
 ])
-print(group_variable)
+# print(group_variable)
 print(overall_result)
