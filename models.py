@@ -30,7 +30,7 @@ from utils import *
 import math
 import warnings
 import logging
-from tsai.all import Categorize, TSDatasets, TSClassifier, TSDataLoaders, TSStandardize, TST, Learner, LabelSmoothingCrossEntropyFlat, RocAucBinary
+from tsai.all import Categorize, TSDatasets, TSClassifier, TSDataLoaders, TSStandardize, TST, Learner, LabelSmoothingCrossEntropyFlat, LabelSmoothingCrossEntropy, RocAucBinary
 from fastai.callback.tracker import EarlyStoppingCallback
 from fastai.metrics import accuracy
 from typing import List, Optional
@@ -940,54 +940,200 @@ def Transformer_dataloader(list_probabilities_subject, lengths, list_true_stages
     )
 
 class SleepTSDatasets:
-    """Wrapper to create tsai compatible datasets."""
+    """Time series datasets for sleep stage classification."""
     
     def __init__(self, 
-                 probabilities: List[np.ndarray], 
-                 lengths: List[int], 
-                 labels: List[np.ndarray],
-                 max_len: Optional[int] = None):
+                probabilities: List[np.ndarray], 
+                lengths: List[int], 
+                labels: List[np.ndarray],
+                max_len: Optional[int] = None):
+        """Initialize datasets with proper sequence handling.
+        
+        Args:
+            probabilities: List of arrays with shape (n_timesteps, n_features)
+            lengths: List of sequence lengths
+            labels: List of label arrays with shape (n_timesteps,)
+            max_len: Optional maximum sequence length for padding
         """
-        Parameters
-        ----------
-        probabilities : List[np.ndarray]
-            List of probability sequences for each subject
-        lengths : List[int]
-            List of sequence lengths
-        labels : List[np.ndarray]
-            List of label sequences
-        max_len : int, optional
-            Maximum sequence length for padding
-        """
-        # Use provided max_len or compute from current set
+        logging.info("" + "="*50)
+        logging.info("Initializing SleepTSDatasets...")
+        logging.info("Input validation and shape check:")
+        logging.info(f"Number of sequences: {len(probabilities)}")
+        logging.info(f"Number of lengths: {len(lengths)}")
+        logging.info(f"Number of label sequences: {len(labels)}")
+        
+        # Verify input shapes match
+        assert len(probabilities) == len(lengths) == len(labels), \
+            f"Mismatched input lengths: probs={len(probabilities)}, lengths={len(lengths)}, labels={len(labels)}"
+        
+        # Get sequence information
+        logging.info("Sequence length analysis:")
+        logging.info(f"Min length: {min(lengths)}")
+        logging.info(f"Max length: {max(lengths)}")
+        logging.info(f"Mean length: {np.mean(lengths):.2f}")
+        
+        # Set maximum sequence length
         self.max_len = max_len if max_len is not None else max(lengths)
+        logging.info(f"Using max_len: {self.max_len}")
+        
+        # Get dimensions
         n_samples = len(probabilities)
         n_vars = probabilities[0].shape[1]
+        logging.info(f"Input dimensions:")
+        logging.info(f"Number of samples: {n_samples}")
+        logging.info(f"Number of variables: {n_vars}")
+        logging.info(f"First sequence shape: {probabilities[0].shape}")
+        logging.info(f"First label shape: {labels[0].shape}")
         
-        # Initialize arrays with consistent max_len
+        # Initialize arrays with proper shapes
+        logging.info("Initializing arrays...")
         X = np.zeros((n_samples, n_vars, self.max_len))
-        y = []  # Store labels in list first
+        y = np.zeros((n_samples, self.max_len))
         
-        # Fill arrays with data
+        # Process each sequence
+        logging.info("Processing sequences:")
         for i, (prob, length, label) in enumerate(zip(probabilities, lengths, labels)):
-            # Handle features (X)
-            if length > self.max_len:
-                X[i, :, :] = prob[:self.max_len].T
-                label = label[:self.max_len]
-            else:
-                X[i, :, :length] = prob[:length].T
+            logging.debug(f"Sequence {i}:")
+            logging.debug(f"  Input shape: {prob.shape}")
+            logging.debug(f"  Length: {length}")
+            logging.debug(f"  Label shape: {label.shape}")
             
-            # Convert labels to integers and use majority class
-            label_ints = label.astype(np.int64)
-            counts = np.bincount(label_ints)
-            y.append(int(np.argmax(counts)))  # Convert to Python int
+            # Verify sequence lengths match
+            assert prob.shape[0] == len(label), \
+                f"Sequence {i}: Mismatched lengths - prob={prob.shape[0]}, label={len(label)}"
+            
+            # Get current sequence length
+            curr_len = min(length, self.max_len)
+            logging.debug(f"  Using length: {curr_len}")
+            
+            # Store features and labels with padding
+            X[i, :, :curr_len] = prob[:curr_len].T
+            y[i, :curr_len] = label[:curr_len]
+            
+            # Verify data types
+            logging.debug(f"  X dtype: {X.dtype}")
+            logging.debug(f"  y dtype: {y.dtype}")
+            
+            # Log label distribution
+            label_counts = np.bincount(label[:curr_len].astype(np.int64))
+            logging.debug(f"  Label distribution: {dict(zip(range(len(label_counts)), label_counts))}")
+            
+            # Progress indicator for large datasets
+            if i % 10 == 0:
+                logging.info(f"Processed {i}/{n_samples} sequences")
         
-        # Convert labels to numpy array of Python ints
-        y = np.array(y, dtype=np.int32)
+        # Verify final shapes
+        logging.info("Final array shapes:")
+        logging.info(f"X shape: {X.shape}")
+        logging.info(f"y shape: {y.shape}")
         
-        # Create tsai datasets
-        tfms = [None, [Categorize()]]
-        self.dsets = TSDatasets(X, y, tfms=tfms)
+        # Verify no NaN values
+        logging.info("Checking for NaN values:")
+        logging.info(f"X NaN count: {np.isnan(X).sum()}")
+        logging.info(f"y NaN count: {np.isnan(y).sum()}")
+        
+        # Create TSDatasets
+        logging.info("Creating TSDatasets...")
+        try:
+            tfms = [None, None]  # No transforms for now
+            self.dsets = TSDatasets(X, y, tfms=tfms)
+            logging.info("TSDatasets creation successful")
+            
+            # Log dataset properties
+            logging.info("TSDatasets properties:")
+            logging.info(f"Input range: [{X.min():.3f}, {X.max():.3f}]")
+            logging.info(f"Unique labels: {np.unique(y)}")
+            
+        except Exception as e:
+            logging.error(f"Failed to create TSDatasets: {str(e)}")
+            raise
+        
+        logging.info("="*50 + "")
+
+class SequenceCrossEntropyLoss(nn.Module):
+    def __init__(self, class_ratio: float):
+        super().__init__()
+        
+        # Adjust weights to more strongly penalize false positives
+        neg_weight = 2.0 / (1.0 - class_ratio)  # Increased weight for negative class
+        pos_weight = 1.0 / class_ratio
+        
+        # Normalize weights
+        total = neg_weight + pos_weight
+        neg_weight = neg_weight / total
+        pos_weight = pos_weight / total
+        
+        self.class_weights = torch.tensor([neg_weight, pos_weight], dtype=torch.float32)
+        
+    def forward(self, pred, target, lengths=None):
+        pred = pred.float()
+        target = target.long()
+        
+        # Move weights to device
+        self.class_weights = self.class_weights.to(pred.device)
+        
+        # Create mask for valid timesteps
+        if lengths is not None:
+            mask = torch.arange(pred.size(1))[None, :] < lengths[:, None]
+            mask = mask.to(pred.device)
+        else:
+            mask = torch.ones_like(target, dtype=torch.bool)
+            
+        # Apply focal loss modification
+        ce_loss = F.cross_entropy(
+            pred[mask].view(-1, pred.size(-1)),
+            target[mask].view(-1),
+            weight=self.class_weights,
+            reduction='none'
+        )
+        
+        # Get probabilities for focal loss
+        pt = torch.exp(-ce_loss)
+        # Apply focal loss formula with gamma=2
+        focal_loss = ((1 - pt) ** 2) * ce_loss
+        
+        return focal_loss.mean()
+    
+class TimeDistributedHead(nn.Module):
+    def __init__(self, d_model, num_classes, fc_dropout=0.2):
+        super().__init__()
+        self.d_model = d_model
+        self.num_classes = num_classes
+        
+        # Create layers for time-distributed processing
+        self.layers = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(fc_dropout),
+            nn.Linear(d_model // 2, num_classes)
+        )
+    
+    def forward(self, x, lengths=None):
+        # Input shape: [batch_size, d_model, seq_len]
+        x = x.transpose(1, 2)  # [batch_size, seq_len, d_model]
+        batch_size, seq_len, _ = x.shape
+        
+        # Create attention mask for padded values
+        if lengths is not None:
+            mask = torch.arange(seq_len)[None, :] < lengths[:, None]
+            mask = mask.to(x.device)
+        else:
+            mask = None
+        
+        # Process each timestep
+        outputs = []
+        for t in range(seq_len):
+            curr_x = x[:, t, :]  # [batch_size, d_model]
+            
+            # Apply mask if available
+            if mask is not None:
+                curr_mask = mask[:, t]
+                curr_x = curr_x * curr_mask.float().unsqueeze(1)
+            
+            curr_out = self.layers(curr_x)
+            outputs.append(curr_out)
+        
+        return torch.stack(outputs, dim=1)  # [batch_size, seq_len, num_classes]
 
 def TST_learner(
     train_probabilities: List[np.ndarray],
@@ -996,21 +1142,32 @@ def TST_learner(
     val_probabilities: List[np.ndarray],
     val_lengths: List[int],
     val_labels: List[np.ndarray],
-    d_model: int = 128,
-    nhead: int = 4,
-    num_layers: int = 2,
-    dropout: float = 0.5,
-    fc_dropout: float = 0.9,
+    d_model: int = 256,
+    nhead: int = 8,
+    num_layers: int = 4,
+    dropout: float = 0.2,
+    fc_dropout: float = 0.3,
     batch_size: int = 16,
-    num_epochs: int = 50,
+    num_epochs: int = 100,
     learning_rate: float = 1e-4
 ) -> Learner:
-    """Create and train a TST model using tsai's Learner."""
+    """Create and train a TST model using tsai's implementation."""
     try:
-        # Determine max sequence length from both train and val sets
-        max_len = max(max(train_lengths), max(val_lengths))
+        logging.info("Initializing TST learner with parameters:")
+        logging.info(f"d_model: {d_model}, nhead: {nhead}, num_layers: {num_layers}")
+        logging.info(f"dropout: {dropout}, fc_dropout: {fc_dropout}")
+        logging.info(f"batch_size: {batch_size}, num_epochs: {num_epochs}")
         
-        # Create datasets with consistent max_len
+        # Log input shapes and types
+        logging.info("Input data shapes:")
+        logging.info(f"Train probabilities: {len(train_probabilities)} sequences")
+        logging.info(f"Train lengths: {len(train_lengths)} values")
+        logging.info(f"Train labels: {len(train_labels)} sequences")
+        logging.info(f"First train sequence shape: {train_probabilities[0].shape}")
+        logging.info(f"First train label shape: {train_labels[0].shape}")
+        
+        # Create datasets and dataloaders
+        max_len = max(max(train_lengths), max(val_lengths))
         train_datasets = SleepTSDatasets(
             train_probabilities, 
             train_lengths, 
@@ -1024,7 +1181,7 @@ def TST_learner(
             max_len=max_len
         )
         
-        # Create dataloaders with standardization
+        # Create dataloaders with proper transforms
         dls = TSDataLoaders.from_dsets(
             train_datasets.dsets,
             val_datasets.dsets,
@@ -1032,42 +1189,72 @@ def TST_learner(
             batch_tfms=TSStandardize(by_var=True)
         )
         
-        # Create TST model
+        # Verify dataloader shapes
+        batch = next(iter(dls.train))
+        x, y = batch
+        logging.info(f"First batch shapes:")
+        logging.info(f"Input (x) shape: {x.shape}")
+        logging.info(f"Label (y) shape: {y.shape}")
+
+        # Calculate class ratio from training labels
+        all_labels = np.concatenate([label for label in train_labels])
+        class_ratio = np.mean(all_labels)  # Ratio of positive class
+        logging.info(f"Class ratio (positive class): {class_ratio:.3f}")
+        
+        # Create TST model with correct parameters
         model = TST(
-            c_in=dls.vars,
-            c_out=dls.c,
-            seq_len=dls.len,
-            n_layers=num_layers,
-            d_model=d_model,
-            n_heads=nhead,
-            d_ff=d_model*4,
-            dropout=dropout,
+            c_in=dls.vars,          # Number of input features
+            c_out=2,                # Binary classification
+            seq_len=dls.len,        # Sequence length
+            max_seq_len=max_len,    # Maximum sequence length
+            d_model=d_model,        # Model dimension (128-1024)
+            n_heads=nhead,          # Number of attention heads (8-16)
+            d_k=None,              # Let it default to d_model/n_heads
+            d_v=None,              # Let it default to d_model/n_heads
+            d_ff=d_model*4,              # Feedforward dimension (256-4096)
+            dropout=dropout,        # Encoder dropout (0.0-0.3)
+            act='gelu',      # Default activation
+            n_layers=num_layers,    # Number of encoder layers (2-8)
+            fc_dropout=fc_dropout,  # FC layer dropout (0.0-0.8)
+            y_range=None           # Not needed for classification
+        )
+
+        # Replace the model's head
+        model.head = TimeDistributedHead(
+            d_model=d_model, 
+            num_classes=2, 
             fc_dropout=fc_dropout
         )
         
-        # Create learner with only accuracy metric
+        # Create learner with sequence loss
         learn = Learner(
             dls, 
             model,
-            loss_func=LabelSmoothingCrossEntropyFlat(),
-            metrics=[accuracy],  # Removed RocAucBinary() metric
+            loss_func=SequenceCrossEntropyLoss(class_ratio=class_ratio),
+            metrics=[accuracy],
             cbs=[
-                EarlyStoppingCallback(monitor='valid_loss', patience=10)
+                EarlyStoppingCallback(
+                    monitor='valid_loss',
+                    min_delta=0.001,
+                    patience=20
+                )
             ]
         )
         
-        # Train model
-        logging.info("Training TST model...")
+        # Train with one-cycle policy
+        logging.info("Starting training...")
         learn.fit_one_cycle(
             num_epochs,
             learning_rate,
-            wd=0.01
+            wd=0.1,
+            pct_start=0.3
         )
         
         return learn
-        
+    
     except Exception as e:
         logging.error(f"TST training failed with error: {str(e)}")
+        logging.error("Error details:", exc_info=True)
         raise e
 
 def TST_eval(
@@ -1077,82 +1264,86 @@ def TST_eval(
     true_labels: List[np.ndarray],
     test_name: str
 ) -> pd.DataFrame:
-    """Evaluate TST model performance."""
-    logging.info("Getting predictions from TST model")
+    """
+    Evaluate TST model performance with time-distributed predictions.
+    """
+    logging.info("Evaluating TST model performance...")
     predictions = []
     kappa_scores = []
     processed_true_labels = []
     
-    # Add input logging
-    logging.info(f"Number of test sequences: {len(test_probabilities)}")
-    logging.info(f"Test lengths range: {min(test_lengths)} to {max(test_lengths)}")
+    # Create test dataset with same preprocessing as training
+    test_datasets = SleepTSDatasets(
+        test_probabilities,
+        test_lengths,
+        true_labels,
+        max_len=learner.dls.len
+    )
     
-    # Process each sequence
-    for i, (prob, length) in enumerate(zip(test_probabilities, test_lengths)):
-        # Prepare input tensor
-        curr_len = min(length, learner.dls.len)
-        X = np.zeros((1, prob.shape[1], learner.dls.len))
-        X[0, :, :curr_len] = prob[:curr_len].T
-        X_torch = torch.FloatTensor(X)
-        
-        logging.info(f"\nProcessing sequence {i}:")
-        logging.info(f"Input shape: {X.shape}")
-        
-        # Get predictions
-        learner.model.eval()
-        with torch.no_grad():
-            device = next(learner.model.parameters()).device
-            X_torch = X_torch.to(device)
-            
-            # Get model output and convert to probabilities
-            output = learner.model(X_torch)
-            logging.info(f"Output shape: {output.shape}")
-
-            # Get sequence probabilities and expand to full length
-            seq_probs = torch.softmax(output, dim=-1)[0].cpu().numpy()
-            seq_predictions = np.repeat(seq_probs[np.newaxis, :], curr_len, axis=0)
-            
-            logging.info(f"Sequence probabilities shape: {seq_probs.shape}")
-            logging.info(f"Expanded predictions shape: {seq_predictions.shape}")
-
-            # Get binary predictions for current sequence
-            pred_labels = seq_predictions.argmax(axis=-1)
-            
-            # Calculate kappa for this sequence using truncated labels
-            true_seq = true_labels[i][:curr_len]
-            kappa = cohen_kappa_score(true_seq, pred_labels)
-            kappa_scores.append(kappa)
-            
-            # Store predictions and corresponding true labels
-            predictions.append(seq_predictions)
-            processed_true_labels.append(true_seq)
+    # Create test dataloader using same transforms as validation set
+    bs = learner.dls.valid.bs  # Get batch size from validation dataloader
+    test_dl = learner.dls.valid.new(test_datasets.dsets[0])
     
-    # Log details before final concatenation
-    logging.info("\nPreparing final predictions:")
-    logging.info(f"Number of sequences: {len(predictions)}")
-    logging.info(f"Prediction shapes: {[p.shape for p in predictions]}")
-    logging.info(f"True label shapes: {[t.shape for t in processed_true_labels]}")
+    # Get compute device
+    device = next(learner.model.parameters()).device
     
-    # Prepare final predictions and true labels
-    array_predict = np.concatenate([p.argmax(axis=-1) for p in predictions])
-    array_true = np.concatenate(processed_true_labels)
+    # Get predictions batch by batch
+    learner.model.eval()
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(test_dl):
+            # Move batch to device
+            x = batch[0].to(device)
+            
+            # Get model predictions
+            outputs = learner.model(x)  # Shape: [batch_size, seq_len, num_classes]
+            
+            # Convert to probabilities
+            batch_probs = torch.softmax(outputs, dim=-1)
+            
+            # Process each sequence in the batch
+            for seq_idx in range(len(batch_probs)):
+                batch_offset = batch_idx * bs  # Use stored batch size
+                if batch_offset + seq_idx >= len(test_lengths):
+                    break
+                    
+                # Get current sequence length
+                curr_len = test_lengths[batch_offset + seq_idx]
+                curr_len = min(curr_len, learner.dls.len)
+                
+                # Get predictions and true labels for current sequence
+                seq_probs = batch_probs[seq_idx, :curr_len].cpu().numpy()
+                true_seq = true_labels[batch_offset + seq_idx][:curr_len]
+                
+                # Calculate kappa score
+                pred_labels = seq_probs.argmax(axis=-1)
+                kappa = cohen_kappa_score(true_seq, pred_labels)
+                kappa_scores.append(kappa)
+                
+                # Store predictions and true labels
+                predictions.append(seq_probs)
+                processed_true_labels.append(true_seq)
+                
+                if seq_idx % 10 == 0:
+                    logging.info(f"Processed sequence {batch_offset + seq_idx}")
+                    logging.info(f"Sequence length: {curr_len}")
+                    logging.info(f"Predictions shape: {seq_probs.shape}")
+    
+    # Concatenate all predictions and true labels
     array_probabilities = np.concatenate(predictions)
+    array_true = np.concatenate(processed_true_labels)
+    array_predict = array_probabilities.argmax(axis=-1)
     
-    # Verify lengths match
-    assert len(array_true) == len(array_predict), f"Length mismatch: true={len(array_true)}, pred={len(array_predict)}"
-    
-    # Log final shapes and values
-    logging.info("\nFinal arrays:")
+    # Log shapes and sample values
+    logging.info("Final evaluation arrays:")
     logging.info(f"Predictions shape: {array_predict.shape}")
     logging.info(f"True labels shape: {array_true.shape}")
     logging.info(f"Probabilities shape: {array_probabilities.shape}")
-    logging.info(f"Sample predictions: {array_predict[:10]}")
-    logging.info(f"Sample true labels: {array_true[:10]}")
-    logging.info(f"Sample probabilities: {array_probabilities[:5]}")
     
-    # Calculate metrics and add kappa
-    logging.info("\nCalculating metrics...")
+    # Calculate and return metrics
     results_df = calculate_metrics(array_true, array_probabilities, test_name)
     results_df["Cohen's Kappa"] = np.mean(kappa_scores)
+    
+    # Plot confusion matrix
+    plot_cm(array_predict, array_true, test_name)
     
     return results_df
