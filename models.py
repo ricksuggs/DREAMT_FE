@@ -690,7 +690,7 @@ def Transformer_engine(
 
         # Add early stopping
         best_loss = float('inf')
-        patience = 10
+        patience = 20
         patience_counter = 0
         
         for epoch in range(num_epoch):
