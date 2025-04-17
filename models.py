@@ -1275,20 +1275,16 @@ def TST_learner(
         
         # Create TST model with correct parameters
         model = TST(
-            c_in=dls.vars,          # Number of input features
-            c_out=2,                # Binary classification
-            seq_len=dls.len,        # Sequence length
-            max_seq_len=max_len,    # Maximum sequence length
-            d_model=d_model,        # Model dimension (128-1024)
-            n_heads=nhead,          # Number of attention heads (8-16)
-            d_k=None,              # Let it default to d_model/n_heads
-            d_v=None,              # Let it default to d_model/n_heads
-            d_ff=d_model*4,              # Feedforward dimension (256-4096)
-            dropout=dropout,        # Encoder dropout (0.0-0.3)
-            act='gelu',      # Default activation
-            n_layers=num_layers,    # Number of encoder layers (2-8)
-            fc_dropout=fc_dropout,  # FC layer dropout (0.0-0.8)
-            y_range=None           # Not needed for classification
+            c_in=dls.vars,          
+            c_out=2,                
+            seq_len=dls.len,        
+            max_seq_len=max_len,    
+            d_model=d_model,        
+            n_heads=nhead,          
+            d_ff=d_model*4,              
+            dropout=dropout,        
+            n_layers=num_layers,    
+            fc_dropout=fc_dropout
         )
 
         # Replace the model's head
