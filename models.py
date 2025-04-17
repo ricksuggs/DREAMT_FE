@@ -642,7 +642,7 @@ def LSTM_eval(lstm_model, dataloader_test, list_true_stages_test, test_name):
 
 def Transformer_engine(
     dataloader_train, 
-    num_epoch, 
+    num_epoch=300, 
     d_model=128,
     nhead=4,
     num_layers=2,
