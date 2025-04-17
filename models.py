@@ -957,41 +957,41 @@ class SleepTSDatasets:
         """
         logging.info("" + "="*50)
         logging.info("Initializing SleepTSDatasets...")
-        logging.info("Input validation and shape check:")
-        logging.info(f"Number of sequences: {len(probabilities)}")
-        logging.info(f"Number of lengths: {len(lengths)}")
-        logging.info(f"Number of label sequences: {len(labels)}")
+        logging.debug("Input validation and shape check:")
+        logging.debug(f"Number of sequences: {len(probabilities)}")
+        logging.debug(f"Number of lengths: {len(lengths)}")
+        logging.debug(f"Number of label sequences: {len(labels)}")
         
         # Verify input shapes match
         assert len(probabilities) == len(lengths) == len(labels), \
             f"Mismatched input lengths: probs={len(probabilities)}, lengths={len(lengths)}, labels={len(labels)}"
         
         # Get sequence information
-        logging.info("Sequence length analysis:")
-        logging.info(f"Min length: {min(lengths)}")
-        logging.info(f"Max length: {max(lengths)}")
-        logging.info(f"Mean length: {np.mean(lengths):.2f}")
+        logging.debug("Sequence length analysis:")
+        logging.debug(f"Min length: {min(lengths)}")
+        logging.debug(f"Max length: {max(lengths)}")
+        logging.debug(f"Mean length: {np.mean(lengths):.2f}")
         
         # Set maximum sequence length
         self.max_len = max_len if max_len is not None else max(lengths)
-        logging.info(f"Using max_len: {self.max_len}")
+        logging.debug(f"Using max_len: {self.max_len}")
         
         # Get dimensions
         n_samples = len(probabilities)
         n_vars = probabilities[0].shape[1]
-        logging.info(f"Input dimensions:")
-        logging.info(f"Number of samples: {n_samples}")
-        logging.info(f"Number of variables: {n_vars}")
-        logging.info(f"First sequence shape: {probabilities[0].shape}")
-        logging.info(f"First label shape: {labels[0].shape}")
+        logging.debug(f"Input dimensions:")
+        logging.debug(f"Number of samples: {n_samples}")
+        logging.debug(f"Number of variables: {n_vars}")
+        logging.debug(f"First sequence shape: {probabilities[0].shape}")
+        logging.debug(f"First label shape: {labels[0].shape}")
         
         # Initialize arrays with proper shapes
-        logging.info("Initializing arrays...")
+        logging.debug("Initializing arrays...")
         X = np.zeros((n_samples, n_vars, self.max_len))
         y = np.zeros((n_samples, self.max_len))
         
         # Process each sequence
-        logging.info("Processing sequences:")
+        logging.debug("Processing sequences:")
         for i, (prob, length, label) in enumerate(zip(probabilities, lengths, labels)):
             logging.debug(f"Sequence {i}:")
             logging.debug(f"  Input shape: {prob.shape}")
@@ -1020,35 +1020,35 @@ class SleepTSDatasets:
             
             # Progress indicator for large datasets
             if i % 10 == 0:
-                logging.info(f"Processed {i}/{n_samples} sequences")
+                logging.debug(f"Processed {i}/{n_samples} sequences")
         
         # Verify final shapes
-        logging.info("Final array shapes:")
-        logging.info(f"X shape: {X.shape}")
-        logging.info(f"y shape: {y.shape}")
+        logging.debug("Final array shapes:")
+        logging.debug(f"X shape: {X.shape}")
+        logging.debug(f"y shape: {y.shape}")
         
         # Verify no NaN values
-        logging.info("Checking for NaN values:")
-        logging.info(f"X NaN count: {np.isnan(X).sum()}")
-        logging.info(f"y NaN count: {np.isnan(y).sum()}")
+        logging.debug("Checking for NaN values:")
+        logging.debug(f"X NaN count: {np.isnan(X).sum()}")
+        logging.debug(f"y NaN count: {np.isnan(y).sum()}")
         
         # Create TSDatasets
-        logging.info("Creating TSDatasets...")
+        logging.debug("Creating TSDatasets...")
         try:
             tfms = [None, None]  # No transforms for now
             self.dsets = TSDatasets(X, y, tfms=tfms)
-            logging.info("TSDatasets creation successful")
+            logging.debug("TSDatasets creation successful")
             
             # Log dataset properties
-            logging.info("TSDatasets properties:")
-            logging.info(f"Input range: [{X.min():.3f}, {X.max():.3f}]")
-            logging.info(f"Unique labels: {np.unique(y)}")
+            logging.debug("TSDatasets properties:")
+            logging.debug(f"Input range: [{X.min():.3f}, {X.max():.3f}]")
+            logging.debug(f"Unique labels: {np.unique(y)}")
             
         except Exception as e:
             logging.error(f"Failed to create TSDatasets: {str(e)}")
             raise
         
-        logging.info("="*50 + "")
+        logging.debug("="*50 + "")
 
 class SequenceCrossEntropyLoss(nn.Module):
     def __init__(self, class_ratio: float):
@@ -1148,23 +1148,23 @@ def TST_learner(
     dropout: float = 0.2,
     fc_dropout: float = 0.3,
     batch_size: int = 16,
-    num_epochs: int = 100,
+    num_epochs: int = 150,
     learning_rate: float = 1e-4
 ) -> Learner:
     """Create and train a TST model using tsai's implementation."""
     try:
-        logging.info("Initializing TST learner with parameters:")
-        logging.info(f"d_model: {d_model}, nhead: {nhead}, num_layers: {num_layers}")
-        logging.info(f"dropout: {dropout}, fc_dropout: {fc_dropout}")
-        logging.info(f"batch_size: {batch_size}, num_epochs: {num_epochs}")
+        logging.debug("Initializing TST learner with parameters:")
+        logging.debug(f"d_model: {d_model}, nhead: {nhead}, num_layers: {num_layers}")
+        logging.debug(f"dropout: {dropout}, fc_dropout: {fc_dropout}")
+        logging.debug(f"batch_size: {batch_size}, num_epochs: {num_epochs}")
         
         # Log input shapes and types
-        logging.info("Input data shapes:")
-        logging.info(f"Train probabilities: {len(train_probabilities)} sequences")
-        logging.info(f"Train lengths: {len(train_lengths)} values")
-        logging.info(f"Train labels: {len(train_labels)} sequences")
-        logging.info(f"First train sequence shape: {train_probabilities[0].shape}")
-        logging.info(f"First train label shape: {train_labels[0].shape}")
+        logging.debug("Input data shapes:")
+        logging.debug(f"Train probabilities: {len(train_probabilities)} sequences")
+        logging.debug(f"Train lengths: {len(train_lengths)} values")
+        logging.debug(f"Train labels: {len(train_labels)} sequences")
+        logging.debug(f"First train sequence shape: {train_probabilities[0].shape}")
+        logging.debug(f"First train label shape: {train_labels[0].shape}")
         
         # Create datasets and dataloaders
         max_len = max(max(train_lengths), max(val_lengths))
@@ -1192,14 +1192,14 @@ def TST_learner(
         # Verify dataloader shapes
         batch = next(iter(dls.train))
         x, y = batch
-        logging.info(f"First batch shapes:")
-        logging.info(f"Input (x) shape: {x.shape}")
-        logging.info(f"Label (y) shape: {y.shape}")
+        logging.debug(f"First batch shapes:")
+        logging.debug(f"Input (x) shape: {x.shape}")
+        logging.debug(f"Label (y) shape: {y.shape}")
 
         # Calculate class ratio from training labels
         all_labels = np.concatenate([label for label in train_labels])
         class_ratio = np.mean(all_labels)  # Ratio of positive class
-        logging.info(f"Class ratio (positive class): {class_ratio:.3f}")
+        logging.debug(f"Class ratio (positive class): {class_ratio:.3f}")
         
         # Create TST model with correct parameters
         model = TST(
@@ -1242,7 +1242,7 @@ def TST_learner(
         )
         
         # Train with one-cycle policy
-        logging.info("Starting training...")
+        logging.debug("Starting training...")
         learn.fit_one_cycle(
             num_epochs,
             learning_rate,
@@ -1267,7 +1267,7 @@ def TST_eval(
     """
     Evaluate TST model performance with time-distributed predictions.
     """
-    logging.info("Evaluating TST model performance...")
+    logging.debug("Evaluating TST model performance...")
     predictions = []
     kappa_scores = []
     processed_true_labels = []
@@ -1324,9 +1324,9 @@ def TST_eval(
                 processed_true_labels.append(true_seq)
                 
                 if seq_idx % 10 == 0:
-                    logging.info(f"Processed sequence {batch_offset + seq_idx}")
-                    logging.info(f"Sequence length: {curr_len}")
-                    logging.info(f"Predictions shape: {seq_probs.shape}")
+                    logging.debug(f"Processed sequence {batch_offset + seq_idx}")
+                    logging.debug(f"Sequence length: {curr_len}")
+                    logging.debug(f"Predictions shape: {seq_probs.shape}")
     
     # Concatenate all predictions and true labels
     array_probabilities = np.concatenate(predictions)
@@ -1334,10 +1334,10 @@ def TST_eval(
     array_predict = array_probabilities.argmax(axis=-1)
     
     # Log shapes and sample values
-    logging.info("Final evaluation arrays:")
-    logging.info(f"Predictions shape: {array_predict.shape}")
-    logging.info(f"True labels shape: {array_true.shape}")
-    logging.info(f"Probabilities shape: {array_probabilities.shape}")
+    logging.debug("Final evaluation arrays:")
+    logging.debug(f"Predictions shape: {array_predict.shape}")
+    logging.debug(f"True labels shape: {array_true.shape}")
+    logging.debug(f"Probabilities shape: {array_probabilities.shape}")
     
     # Calculate and return metrics
     results_df = calculate_metrics(array_true, array_probabilities, test_name)
