@@ -639,6 +639,56 @@ def LSTM_eval(lstm_model, dataloader_test, list_true_stages_test, test_name):
 
     return lstm_test_results_df
 
+class FocalLoss(nn.Module):
+    """Focal Loss for handling class imbalance.
+    
+    Attributes:
+        alpha (float): Weight for positive class (between 0-1)
+        gamma (float): Focusing parameter for modulating loss (≥ 0)
+        label_smoothing (float): Label smoothing factor
+    """
+    
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, label_smoothing: float = 0.1):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.label_smoothing = label_smoothing
+        
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Calculate focal loss.
+        
+        Args:
+            inputs: Model predictions of shape [N, C]
+            targets: Ground truth labels of shape [N]
+            
+        Returns:
+            Calculated focal loss
+        """
+        # Apply softmax to get probabilities
+        ce_loss = F.cross_entropy(
+            inputs, 
+            targets, 
+            reduction='none',
+            label_smoothing=self.label_smoothing
+        )
+        
+        # Get probabilities for true class
+        pt = torch.exp(-ce_loss)
+        
+        # Calculate focal weights
+        focal_weight = (1 - pt) ** self.gamma
+        
+        # Apply alpha weighting
+        alpha_t = torch.where(
+            targets == 1, 
+            self.alpha * torch.ones_like(targets, dtype=torch.float32),
+            (1 - self.alpha) * torch.ones_like(targets, dtype=torch.float32)
+        )
+        
+        # Combine everything
+        loss = alpha_t * focal_weight * ce_loss
+        
+        return loss.mean()
 
 def Transformer_engine(
     dataloader_train, 
@@ -647,9 +697,21 @@ def Transformer_engine(
     nhead=4,
     num_layers=2,
     learning_rate=0.0001,
-    dropout=0.5
+    dropout=0.5,
+    class_ratio: float = None  # Add class ratio parameter
 ):
-    """Train a Transformer model using a DataLoader."""
+    """Train a Transformer model using focal loss.
+    
+    Args:
+        dataloader_train: Training data loader
+        num_epoch: Number of training epochs
+        d_model: Model dimension
+        nhead: Number of attention heads
+        num_layers: Number of transformer layers
+        learning_rate: Initial learning rate
+        dropout: Dropout rate
+        class_ratio: Ratio of positive class for focal loss alpha
+    """
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     logging.info(f"Training on {device}")
 
@@ -664,11 +726,18 @@ def Transformer_engine(
             dropout=dropout
         ).to(device)
 
-        # Loss function with label smoothing
-        loss_function = nn.CrossEntropyLoss(
-            label_smoothing=0.2,
-            ignore_index=-100
-        )
+        # Initialize focal loss
+        if class_ratio is None:
+            # Calculate class ratio from first batch if not provided
+            sample_batch = next(iter(dataloader_train))
+            labels = sample_batch["label"]
+            class_ratio = (labels == 1).float().mean().item()
+        
+        loss_function = FocalLoss(
+            alpha=class_ratio,  # Use class ratio as alpha
+            gamma=2.0,  # Standard focal loss gamma
+            label_smoothing=0.1
+        ).to(device)
 
         # Optimizer with weight decay
         optimizer = torch.optim.AdamW(
@@ -677,7 +746,7 @@ def Transformer_engine(
             weight_decay=0.1
         )
 
-        # Learning rate scheduler - fixed from incorrect import
+        # Learning rate scheduler
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=learning_rate,
@@ -688,7 +757,7 @@ def Transformer_engine(
             final_div_factor=1000
         )
 
-        # Add early stopping
+        # Training loop with early stopping
         best_loss = float('inf')
         patience = 20
         patience_counter = 0
@@ -711,27 +780,29 @@ def Transformer_engine(
                 # Clear gradients
                 optimizer.zero_grad(set_to_none=True)
 
-                # Forward pass with stronger regularization
+                # Forward pass
                 y_pred = model(sample, length, src_key_padding_mask=attention_mask)
-                y_pred = y_pred.view(-1, 2)
-                label = label.view(-1)
                 
-                # Calculate loss only on non-padding tokens
+                # Reshape predictions and labels for loss calculation
                 valid_mask = (label != -100)
-                loss = loss_function(y_pred[valid_mask], label[valid_mask])
+                y_pred_valid = y_pred[valid_mask].view(-1, 2)
+                label_valid = label[valid_mask].view(-1)
+                
+                # Calculate focal loss
+                loss = loss_function(y_pred_valid, label_valid)
 
                 # Backward pass
                 loss.backward()
                 
                 # Gradient clipping
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # Reduced from 1.0
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
                 
                 optimizer.step()
                 scheduler.step()
 
                 # Update metrics
                 total_loss += loss.item()
-                accuracy = calculate_accuracy(y_pred[valid_mask], label[valid_mask]).item()
+                accuracy = calculate_accuracy(y_pred_valid, label_valid).item()
                 total_accuracy += accuracy
                 num_batches += 1
 
@@ -741,6 +812,7 @@ def Transformer_engine(
                     'lr': f'{scheduler.get_last_lr()[0]:.6f}'
                 })
 
+                # Clean up memory
                 del sample, label, y_pred, loss
                 torch.cuda.empty_cache()
 
