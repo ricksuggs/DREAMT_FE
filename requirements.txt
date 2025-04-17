@@ -24,7 +24,7 @@ pyarrow
 tornado
 pyzmq
 pytorch-lightning
-gpboost
+gpboost==1.2.7.1
 shap
 lightgbm
 hyperopt
