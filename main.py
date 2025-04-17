@@ -168,7 +168,7 @@ if 'GPBoost_TST' in steps:
     logging.info("Running TST model for GPBoost post-processing")
     tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
 
-    lgb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'GPBoost_TST')
+    gpb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'GPBoost_TST')
 
 # overall result
 overall_result = pd.concat([
@@ -178,7 +178,8 @@ overall_result = pd.concat([
     lgb_tst_test_results_df,
     gpb_test_results_df, 
     gpb_lstm_test_results_df,
-    gpb_transformer_test_results_df
+    gpb_transformer_test_results_df,
+    gpb_tst_test_results_df
 ])
 print(group_variable)
 print(overall_result)
