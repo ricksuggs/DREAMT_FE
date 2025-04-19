@@ -238,19 +238,10 @@ def LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val):
         return {"loss": -f1, "status": STATUS_OK}
 
     # Run the hyperparameter search
-    # trials = Trials()
-    # lgb_best_hyperparams = fmin(
-    #     fn=objective, space=space, algo=tpe.suggest, max_evals=50, trials=trials
-    # )
-
-    lgb_best_hyperparams = {
-        'learning_rate': 0.4979172689350684, 
-        'max_depth': 2.0,
-        'n_estimators': 290.0,
-        'num_leaves': 100.0,
-        'reg_alpha': 36.0,
-        'reg_lambda': 2.0555917249780014
-    }
+    trials = Trials()
+    lgb_best_hyperparams = fmin(
+        fn=objective, space=space, algo=tpe.suggest, max_evals=50, trials=trials
+    )
     print("Best hyperparameters:", lgb_best_hyperparams)
 
     # Adjust the data types of the best hyperparameters
@@ -517,7 +508,7 @@ def LSTM_dataloader(list_probabilities_subject, lengths, list_true_stages, batch
     return dataloader
 
 
-def LSTM_engine(dataloader_train, num_epoch, hidden_layer_size=32, learning_rate = 0.001):
+def LSTM_engine(dataloader_train, num_epoch, hidden_layer_size=32, learning_rate = 0.001, loss='cross_entropy'):
     """
     Train a LSTM model using a DataLoader.
     
@@ -527,6 +518,12 @@ def LSTM_engine(dataloader_train, num_epoch, hidden_layer_size=32, learning_rate
         DataLoader for the training data.
     num_epoch : int
         Number of epochs to train the model.
+    hidden_layer_size : int, optional
+        Size of the hidden layer (default is 32).
+    learning_rate : float, optional
+        Learning rate for the optimizer (default is 0.001).
+    loss : str, optional
+        Loss function to use ('cross_entropy' or 'focal', default is 'cross_entropy').
 
     Returns
     -------
@@ -541,7 +538,24 @@ def LSTM_engine(dataloader_train, num_epoch, hidden_layer_size=32, learning_rate
 
     # dropout must be 0 if using only one layer of LSTM
     model = BiLSTMPModel(input_size, hidden_layer_size, output_size).to(device)
-    loss_function = nn.CrossEntropyLoss()
+
+    if loss == 'cross_entropy':
+        loss_function = nn.CrossEntropyLoss()
+    elif loss == 'focal':
+        # Calculate class ratio
+        sample_batch = next(iter(dataloader_train))
+        labels = sample_batch["label"]
+        class_ratio = (labels == 1).float().mean().item()
+            
+        logging.info(f"Class ratio (positive class): {class_ratio:.3f}")
+
+        # Initialize focal loss
+        loss_function = FocalLoss(
+            alpha=class_ratio,
+            gamma=2.0,
+            label_smoothing=0.1
+        ).to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     # Training loop
     epochs = num_epoch
