@@ -9,6 +9,7 @@
 - Write docstrings for functions and classes
 - Provide docstrings following PEP 257 conventions.
 - Implement type hints for better code clarity
+- Do not put line breaks in logging messages 
 
 ## Code Organization
 - Structure code with proper separation of concerns
