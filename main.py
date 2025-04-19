@@ -28,15 +28,27 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 steps = [
     'LightGBM', 
-    'LightGBM_LSTM',
+    'LightGBM_LSTM_CrossEntropy',
+    'LightGBM_LSTM_Focal',
     'LightGBM_Transformer',
-    'LightGBM_TST', 
+    'LightGBM_TST',
     'GPBoost',
-    'GPBoost_LSTM',
+    'GPBoost_LSTM_CrossEntropy',
+    'GPBoost_LSTM_Focal',
     'GPBoost_Transformer',
     'GPBoost_TST', 
 ]
 
+lgb_test_results_df = None
+lgb_lstm_cross_entropy_test_results_df = None
+lgb_lstm_focal_test_results_df = None
+lgb_transformer_test_results_df = None
+lgb_tst_test_results_df = None
+gpb_test_results_df = None
+gpb_lstm_cross_entropy_test_results_df = None
+gpb_lstm_focal_test_results_df = None
+gpb_transformer_test_results_df = None
+gpb_tst_test_results_df = None
 
 # Prepare the data
 # Adjust your path here
@@ -96,19 +108,26 @@ if 'LightGBM' in steps:
     shap_values = explainer.shap_values(X_train)
     # shap.summary_plot(shap_values, X_train, plot_type="bar", feature_names=final_features)
 
-
-if 'LightGBM_LSTM' in steps:
+if 'LightGBM_LSTM_CrossEntropy' in steps or 'LightGBM_LSTM_Focal' in steps:
     logging.info("Creating LSTM dataset for LightGBM")
     dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
-
-    logging.info("Running LSTM model for LightGBM")
-    LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
-
-    logging.info("Testing LSTM model for LightGBM")
     dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-    logging.info("Evaluating LSTM model for LightGBM")
-    lgb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM')
+    if 'LightGBM_LSTM_CrossEntropy' in steps:
+
+        logging.info("Running LSTM model for LightGBM_CrossEntropy")
+        LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
+
+        logging.info("Evaluating LSTM model for LightGBM_CrossEntropy")
+        lgb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_CrossEntropy')
+
+    if 'LightGBM_LSTM_Focal' in steps:
+
+        logging.info("Running LSTM model for LightGBM_Focal")
+        LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
+
+        logging.info("Evaluating LSTM model for LightGBM_Focal")
+        lgb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_Focal')
 
 if 'LightGBM_Transformer' in steps:
     logging.info("Creating Transformer dataset for LightGBM")
@@ -116,7 +135,7 @@ if 'LightGBM_Transformer' in steps:
     dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
     logging.info("Running Transformer model for LightGBM post-processing")
-    transformer_model = Transformer_engine(dataloader_train)
+    transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
     lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
 
 if 'LightGBM_TST' in steps:
@@ -145,15 +164,23 @@ if 'GPBoost' in steps:
         test_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
     gpb_test_results_df = GPBoost_result(final_gpb_model, X_test, y_test, group_test, prob_ls_test, true_ls_test)
 
-if 'GPBoost_LSTM' in steps:
+if 'GPBoost_LSTM_CrossEntropy' in steps or 'GPBoost_LSTM_Focal' in steps:
 
-    logging.info("Creating LSTM dataset for GPBoost")
+    logging.info("Creating LSTM dataset for GPBoost_CrossEntropy")
     dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
     dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-    logging.info("Running LSTM model for GPBoost")
-    LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate = 0.001)
-    gpb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM')
+    if 'GPBoost_LSTM_CrossEntropy' in steps:
+
+        logging.info("Running LSTM model for GPBoost_CrossEntropy")
+        LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
+        gpb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_CrossEntropy')
+
+    if 'GPBoost_LSTM_Focal' in steps:
+
+        logging.info("Running LSTM model for GPBoost_Focal")
+        LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
+        gpb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_Focal')
 
 if 'GPBoost_Transformer' in steps:
     logging.info("Creating Transformer dataset for GPBoost post-processing")
@@ -161,7 +188,7 @@ if 'GPBoost_Transformer' in steps:
     dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
     logging.info("Running Transformer model for GPBoost post-processing")
-    transformer_model = Transformer_engine(dataloader_train, num_epoch=150)
+    transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
     gpb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'GPBoost_Transformer')
 
 if 'GPBoost_TST' in steps:
@@ -173,11 +200,13 @@ if 'GPBoost_TST' in steps:
 # overall result
 overall_result = pd.concat([
     lgb_test_results_df, 
-    lgb_lstm_test_results_df,
+    lgb_lstm_cross_entropy_test_results_df,
+    lgb_lstm_focal_test_results_df,
     lgb_transformer_test_results_df,
     lgb_tst_test_results_df,
-    gpb_test_results_df, 
-    gpb_lstm_test_results_df,
+    gpb_test_results_df,
+    gpb_lstm_cross_entropy_test_results_df,
+    gpb_lstm_focal_test_results_df,
     gpb_transformer_test_results_df,
     gpb_tst_test_results_df
 ])
