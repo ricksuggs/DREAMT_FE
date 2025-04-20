@@ -167,12 +167,36 @@ if 'LightGBM' in steps:
 
     if 'LightGBM_Transformer' in steps:
         logging.info("Creating Transformer dataset for LightGBM")
+        # Ensure dataloaders use shuffle=False for val/test
         dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+        dataloader_val = Transformer_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1) # Added val dataloader
         dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
         logging.info("Running Transformer model for LightGBM post-processing")
-        transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
-        lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
+        class_ratios = calculate_class_ratios(true_ls_train) # Calculate class ratios if needed
+        transformer_model = Transformer_engine(
+            dataloader_train,
+            d_model=256, nhead=8, num_layers=4, num_epoch=150,
+            class_ratios=class_ratios # Assuming Transformer_engine uses FocalLoss
+        )
+
+        logging.info("Finding optimal threshold for LightGBM_Transformer")
+        # *** Use the correct model (transformer_model) and dataloader (dataloader_val) ***
+        optimal_threshold_transformer = find_optimal_threshold(
+            transformer_model, # Use the trained transformer model
+            dataloader_val,    # Use the validation dataloader
+            device,
+            metric='f1'
+        )
+
+        logging.info("Evaluating Transformer model for LightGBM post-processing")
+        lgb_transformer_test_results_df = Transformer_eval(
+            transformer_model,
+            dataloader_test,
+            true_ls_test,
+            'LightGBM_Transformer',
+            optimal_threshold=optimal_threshold_transformer # Pass the found threshold
+        )
 
     if 'LightGBM_TST' in steps:
         logging.info("Running TST model for LightGBM post-processing")
@@ -254,12 +278,37 @@ if 'GPBoost' in steps:
 
     if 'GPBoost_Transformer' in steps:
         logging.info("Creating Transformer dataset for GPBoost post-processing")
+        # Ensure dataloaders use shuffle=False for val/test
         dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+        dataloader_val = Transformer_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1)
         dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
         logging.info("Running Transformer model for GPBoost post-processing")
-        transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
-        gpb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'GPBoost_Transformer')
+        class_ratios = calculate_class_ratios(true_ls_train)
+        # Pass class_ratios if Transformer_engine uses them (e.g., for FocalLoss)
+        transformer_model = Transformer_engine(
+            dataloader_train,
+            d_model=256, nhead=8, num_layers=4, num_epoch=150,
+            class_ratios=class_ratios # Assuming Transformer_engine uses FocalLoss
+        )
+
+        logging.info("Finding optimal threshold for GPBoost_Transformer")
+        # *** Use the correct model (transformer_model) and dataloader (dataloader_val) ***
+        optimal_threshold_transformer = find_optimal_threshold(
+            transformer_model, # Use the trained transformer model
+            dataloader_val,    # Use the validation dataloader
+            device,
+            metric='f1'
+        )
+
+        logging.info("Evaluating Transformer model for GPBoost post-processing")
+        gpb_transformer_test_results_df = Transformer_eval(
+            transformer_model,
+            dataloader_test,
+            true_ls_test,
+            'GPBoost_Transformer',
+            optimal_threshold=optimal_threshold_transformer # Pass the found threshold
+        )
 
     if 'GPBoost_TST' in steps:
         logging.info("Running TST model for GPBoost post-processing")
