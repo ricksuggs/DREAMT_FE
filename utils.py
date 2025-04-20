@@ -15,7 +15,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
+import logging
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def missingness_imputation(data):
     """Perform missingness imputation on the given data.
@@ -722,3 +724,122 @@ def plot_by_subject_predicted_labels(
         ax3.legend()
 
     plt.savefig("./Figures/{}_SvW_GPBoost_corrected_by_LSTM.png".format(sid))
+
+def calculate_class_ratios(true_labels_list):
+    """
+    Calculate class distribution ratios from a list of label arrays.
+    
+    Args:
+        true_labels_list (list): List of numpy arrays containing labels
+        
+    Returns:
+        dict: Dictionary containing class counts and ratios
+    """
+    # Concatenate all labels and convert to int type
+    all_labels = np.concatenate(true_labels_list).astype(int)
+    
+    # Calculate class counts
+    unique, counts = np.unique(all_labels, return_counts=True)
+    total_samples = len(all_labels)
+    
+    # Calculate class ratios
+    class_ratios = {cls: count/total_samples for cls, count in zip(unique, counts)}
+    
+    logging.info(f"Class distribution - Total samples: {total_samples}")
+    for cls, ratio in class_ratios.items():
+        logging.info(f"Class {cls}: {ratio:.3f}")
+        
+    return class_ratios
+
+def find_optimal_threshold(
+    model: torch.nn.Module,
+    dataloader_val: DataLoader,
+    device: torch.device,
+    metric: str = 'f1'
+) -> float:
+    """
+    Find the optimal classification threshold on the validation set.
+
+    Args:
+        model (torch.nn.Module): The trained PyTorch model.
+        dataloader_val (DataLoader): DataLoader for the validation set.
+        device (torch.device): The device to run evaluation on (e.g., 'cuda:0').
+        metric (str): The metric to optimize ('f1' or 'pr_auc' - though PR AUC is threshold-independent).
+                      Currently optimizes F1.
+
+    Returns:
+        float: The threshold that maximizes the chosen metric on the validation set.
+    """
+    logging.info(f"Finding optimal threshold using '{metric}' metric on validation set")
+    model.eval()
+    all_probs = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch in dataloader_val:
+            sample = batch["sample"].to(device, non_blocking=True)
+            length = batch["length"]
+            label = batch["label"].to(device, non_blocking=True)
+
+            if sample.shape[0] == 0 or sample.shape[1] == 0:
+                continue
+
+            y_pred = model(sample, length)
+
+            # Assuming binary classification and output is (N, SeqLen, 2) or similar
+            # Flatten and get probabilities for the positive class (class 1)
+            # Handle potential padding (-100) if necessary
+            y_pred_flat = y_pred.view(-1, y_pred.shape[-1])
+            label_flat = label.view(-1)
+
+            valid_mask = (label_flat != -100) # Example mask for padding
+            y_pred_valid = y_pred_flat[valid_mask]
+            label_valid = label_flat[valid_mask]
+
+            if y_pred_valid.shape[0] > 0:
+                # Get probabilities for the positive class (index 1)
+                probs = torch.softmax(y_pred_valid, dim=1)[:, 1].cpu().numpy()
+                all_probs.append(probs)
+                all_labels.append(label_valid.cpu().numpy())
+
+    if not all_labels:
+        logging.warning("No valid labels found in validation set for threshold optimization. Returning 0.5.")
+        return 0.5
+
+    all_probs = np.concatenate(all_probs)
+    all_labels = np.concatenate(all_labels)
+
+    if metric == 'f1':
+        precision, recall, thresholds = precision_recall_curve(all_labels, all_probs)
+        # Calculate F1 score for each threshold, avoiding division by zero
+        f1_scores = np.divide(2 * precision * recall, precision + recall,
+                              out=np.zeros_like(precision), where=(precision + recall) != 0)
+
+        # The last threshold corresponds to predicting only the negative class (recall=0)
+        # The first threshold corresponds to predicting only the positive class (precision might be low)
+        # We typically ignore the edge cases where precision or recall is 0 unless it's the only option
+        valid_idx = np.where((precision + recall) > 0)[0]
+        if len(valid_idx) == 0:
+             logging.warning("Could not find any threshold with non-zero precision/recall. Returning 0.5.")
+             return 0.5
+
+        best_idx = valid_idx[np.argmax(f1_scores[valid_idx])]
+        optimal_threshold = thresholds[best_idx]
+        logging.info(f"Optimal F1 threshold found: {optimal_threshold:.4f} (F1: {f1_scores[best_idx]:.4f})")
+
+    # Add other metrics like G-mean if needed
+    # elif metric == 'gmean':
+    #     fpr, tpr, thresholds = roc_curve(all_labels, all_probs)
+    #     gmeans = np.sqrt(tpr * (1-fpr))
+    #     best_idx = np.argmax(gmeans)
+    #     optimal_threshold = thresholds[best_idx]
+    #     logging.info(f"Optimal G-mean threshold found: {optimal_threshold:.4f} (G-mean: {gmeans[best_idx]:.4f})")
+
+    else:
+        logging.warning(f"Unsupported metric '{metric}' for threshold optimization. Defaulting to 0.5.")
+        optimal_threshold = 0.5
+
+    # Ensure threshold is within a reasonable range (e.g., handle edge cases from precision_recall_curve)
+    optimal_threshold = max(min(optimal_threshold, 0.999), 0.001)
+
+    return float(optimal_threshold)
