@@ -23,14 +23,13 @@ from sklearn.metrics import f1_score, cohen_kappa_score
 import lightgbm as lgb
 import gpboost as gpb
 from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
-from imblearn.over_sampling import SMOTE
 from torch.utils.data import DataLoader
 from tqdm import tqdm  # Add this import
 from utils import *
 import math
 import warnings
 import logging
-from tsai.all import Categorize, TSDatasets, TSClassifier, TSDataLoaders, TSStandardize, TST, Learner, LabelSmoothingCrossEntropyFlat, LabelSmoothingCrossEntropy, RocAucBinary
+from tsai.all import TSDatasets, TSDataLoaders, TSStandardize, TST, Learner
 from fastai.callback.tracker import EarlyStoppingCallback
 from fastai.metrics import accuracy
 from typing import List, Optional
@@ -773,7 +772,7 @@ def Transformer_engine(
 
         # Training loop with early stopping
         best_loss = float('inf')
-        patience = 20
+        patience = 15
         patience_counter = 0
         
         for epoch in range(num_epoch):
