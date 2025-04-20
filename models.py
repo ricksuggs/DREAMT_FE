@@ -90,85 +90,120 @@ class LSTMPModel(nn.Module):
 
 
 class SleepTransformer(nn.Module):
-    def __init__(self, input_size, d_model=128, nhead=4, num_layers=2, dropout=0.5, max_seq_length=2000):  # Increased dropout
+    """
+    Transformer model for sleep stage prediction based on sequence features.
+    """
+    def __init__(self, input_size: int, d_model: int, nhead: int, num_layers: int, dropout: float = 0.1, max_len: int = 2000):
+        """
+        Initializes the SleepTransformer model.
+
+        Args:
+            input_size (int): Number of input features.
+            d_model (int): Dimension of the transformer model embeddings.
+            nhead (int): Number of attention heads.
+            num_layers (int): Number of transformer encoder layers.
+            dropout (float, optional): Dropout rate. Defaults to 0.1.
+            max_len (int, optional): Maximum sequence length for positional encoding. Defaults to 2000.
+        """
         super().__init__()
-        
-        # Project input features to transformer dimension
         self.input_proj = nn.Linear(input_size, d_model)
-        
-        # Positional encoding for temporal information
-        self.pos_encoder = PositionalEncoding(d_model, max_seq_length)
-        
-        # Transformer encoder
+        self.pos_encoder = PositionalEncoding(d_model, max_len)
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
-            dim_feedforward=2*d_model,
             dropout=dropout,
-            batch_first=True,
-            norm_first=True
+            batch_first=True # Expect (batch, seq, feature)
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        
-        # Output layer
-        self.fc = nn.Linear(d_model, 2)
-        
-        # Initialize parameters
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers
+        )
+
+        self.fc = nn.Linear(d_model, 2) # Output layer for binary classification
         self._init_parameters()
-    
+
     def _init_parameters(self):
         """Initialize model parameters."""
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def _create_padding_mask(lengths, device):
-        """Create padding mask for transformer based on sequence lengths"""
-        # Convert lengths to tensor and move to correct device if needed
-        if not isinstance(lengths, torch.Tensor):
-            lengths = torch.tensor(lengths, device=device)
-        else:
-            lengths = lengths.to(device)
-        
-        max_len = int(lengths.max().item())
-        mask = torch.arange(max_len, device=device)[None, :] >= lengths[:, None]
+    @staticmethod
+    def _create_padding_mask(lengths: torch.Tensor, device: torch.device) -> torch.Tensor:
+        """
+        Create padding mask for transformer based on sequence lengths.
+
+        Args:
+            lengths (torch.Tensor): Tensor containing the true length of each sequence in the batch.
+                                    Must be on the target device.
+            device (torch.device): Device to create the mask on.
+
+        Returns:
+            torch.Tensor: Boolean mask of shape (batch_size, max_seq_len) where True indicates a padded position.
+        """
+        batch_size = lengths.size(0)
+        max_len = lengths.max().item() # Determine max length in the current batch
+        # Ensure lengths is on the correct device before comparison
+        mask = torch.arange(max_len, device=device).expand(batch_size, max_len) >= lengths.unsqueeze(1)
         return mask
-    
-    def forward(self, x, lengths, src_key_padding_mask=None):
+
+    def forward(self, x: torch.Tensor, lengths: torch.Tensor, src_key_padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Forward pass of the model.
-        
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input tensor of shape [batch_size, seq_len, input_size]
-        lengths : torch.Tensor
-            Lengths of sequences in batch
-        src_key_padding_mask : torch.Tensor, optional
-            Mask for padding tokens (True for padding positions)
-            
-        Returns
-        -------
-        torch.Tensor
-            Output tensor of shape [batch_size, seq_len, 2]
+
+        Args:
+            x (torch.Tensor): Input tensor of shape [batch_size, seq_len, input_size].
+            lengths (torch.Tensor): Lengths of sequences in batch (used if mask is not provided).
+                                    Expected to be on CPU initially.
+            src_key_padding_mask (torch.Tensor, optional): Mask for padding tokens (True for padding positions).
+                                                           Shape: [batch_size, seq_len]. Defaults to None.
+
+        Returns:
+            torch.Tensor: Output tensor of shape [batch_size, seq_len, 2].
         """
-        # Project input to transformer dimension
+        # Determine target device from input tensor x
+        target_device = x.device
+        # Move lengths tensor to the target device
+        lengths_on_device = lengths.to(target_device)
+
+        # Project input to transformer dimension: [batch_size, seq_len, d_model]
         x = self.input_proj(x)
-        
-        # Add positional encoding
+
+        # Add positional encoding: [batch_size, seq_len, d_model]
         x = self.pos_encoder(x)
-        
-        # If no mask provided, create one from lengths
+
+        # Create mask if not provided (ensure it matches x's seq_len)
         if src_key_padding_mask is None:
-            src_key_padding_mask = self._create_padding_mask(lengths, x.device)
-        
-        # Apply transformer with padding mask
+            # Use x's sequence length dimension (dim 1 because batch_first=True)
+            max_len_in_batch = x.size(1)
+            batch_size = x.size(0)
+            # Create mask based on actual lengths, ensuring size matches x
+            # Use lengths_on_device here
+            mask = torch.arange(max_len_in_batch, device=target_device).expand(batch_size, max_len_in_batch) >= lengths_on_device.unsqueeze(1)
+            src_key_padding_mask = mask
+        elif src_key_padding_mask.shape[1] != x.shape[1]:
+             # Handle potential shape mismatch if mask was pre-computed with different max_len
+             logging.warning(f"Adjusting src_key_padding_mask shape from {src_key_padding_mask.shape} to match input seq_len {x.shape[1]}")
+             max_len_in_batch = x.shape[1]
+             batch_size = x.size(0)
+             # Use lengths_on_device here
+             mask = torch.arange(max_len_in_batch, device=target_device).expand(batch_size, max_len_in_batch) >= lengths_on_device.unsqueeze(1)
+             src_key_padding_mask = mask
+        # Ensure the provided mask is also on the correct device
+        elif src_key_padding_mask.device != target_device:
+             src_key_padding_mask = src_key_padding_mask.to(target_device)
+
+
+        # Apply transformer: Input shape [batch_size, seq_len, d_model] because batch_first=True
+        # Mask shape: [batch_size, seq_len]
         x = self.transformer(x, src_key_padding_mask=src_key_padding_mask)
-        
-        # Apply final linear layer
+
+        # Apply final linear layer: [batch_size, seq_len, 2]
         x = self.fc(x)
-        
+
         return x
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=2000):
@@ -225,7 +260,7 @@ def LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val):
             n_estimators=int(space["n_estimators"]),
             learning_rate=space["learning_rate"],
             num_leaves=int(space["num_leaves"]),
-            verbose=-1,
+            verbose=-1
         )
 
         clf.fit(X_train_resampled, y_train_resampled)
@@ -605,7 +640,7 @@ def LSTM_eval(
     dataloader_test: DataLoader,
     list_true_stages_test: List[np.ndarray],
     test_name: str,
-    optimal_threshold: float = 0.5 # Add optimal_threshold parameter
+    optimal_threshold: float # Removed default, should always be provided now
 ) -> pd.DataFrame:
     """
     Evaluate an LSTM model using a DataLoader, applying an optimal threshold.
@@ -615,7 +650,7 @@ def LSTM_eval(
         dataloader_test (DataLoader): DataLoader for the test data.
         list_true_stages_test (List[np.ndarray]): List of true label arrays for test subjects.
         test_name (str): Name for the test run (used in results).
-        optimal_threshold (float): Classification threshold to use for metrics like F1, Precision, Recall.
+        optimal_threshold (float): Classification threshold to use.
 
     Returns:
         pd.DataFrame: DataFrame containing evaluation metrics.
@@ -625,22 +660,24 @@ def LSTM_eval(
     lstm_model.to(device)
     logging.info(f"Evaluating {test_name} using threshold: {optimal_threshold:.4f}")
 
-    predicted_probabilities_list = []
-    valid_true_labels_list = []
+    predicted_probabilities_list: List[np.ndarray] = []
+    valid_true_labels_list: List[np.ndarray] = []
     seq_idx = 0
 
     with torch.no_grad():
         for batch in dataloader_test:
             sample = batch["sample"].to(device, non_blocking=True)
             length = batch["length"] # Stays on CPU
-            # label = batch["label"].to(device, non_blocking=True) # Labels not needed directly for eval if using list_true_stages_test
 
-            outputs = lstm_model(sample, length) # Shape: (batch_size, seq_len, num_classes)
+            try:
+                outputs = lstm_model(sample, length) # Shape: (batch_size, seq_len, num_classes)
+            except Exception as e:
+                logging.error(f"Error during LSTM inference in eval: {e}", exc_info=True)
+                continue # Skip batch on error
 
             batch_size = outputs.size(0)
             for b in range(batch_size):
                 seq_len = length[b].item()
-                # Ensure we don't index beyond the actual length of the true labels list
                 if seq_idx >= len(list_true_stages_test):
                      logging.warning(f"Sequence index {seq_idx} out of bounds for list_true_stages_test (length {len(list_true_stages_test)}). Skipping.")
                      seq_idx += 1
@@ -648,16 +685,15 @@ def LSTM_eval(
 
                 true_labels = list_true_stages_test[seq_idx][:seq_len]
 
-                # Get predictions for this sequence up to its actual length
                 # Apply softmax to get probabilities
                 probs = torch.softmax(outputs[b, :seq_len, :], dim=-1).cpu().numpy()
 
-                # Ensure predictions and true labels have the same length after potential truncation
+                # Ensure predictions and true labels have the same length
                 min_len = min(len(true_labels), len(probs))
                 true_labels = true_labels[:min_len]
                 probs = probs[:min_len]
 
-                if len(true_labels) > 0: # Only append if there are valid labels/preds
+                if len(true_labels) > 0:
                     predicted_probabilities_list.append(probs)
                     valid_true_labels_list.append(true_labels)
                 else:
@@ -667,49 +703,25 @@ def LSTM_eval(
 
     if not valid_true_labels_list:
         logging.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
-        # Return an empty or placeholder DataFrame
         return pd.DataFrame(columns=['Model', 'Precision', 'Recall', 'F1 Score', 'Specificity', 'AUROC', 'AUPRC', 'Accuracy', "Cohen's Kappa"])
 
-
     # Concatenate all probabilities and true labels
-    all_probabilities = np.concatenate(predicted_probabilities_list)
-    all_true_labels = np.concatenate(valid_true_labels_list)
+    all_probabilities: np.ndarray = np.concatenate(predicted_probabilities_list)
+    all_true_labels: np.ndarray = np.concatenate(valid_true_labels_list)
 
-    # Get probabilities for the positive class (class 1)
-    positive_probs = all_probabilities[:, 1]
-
-    # Apply the optimal threshold to get predicted labels
-    predicted_labels = (positive_probs >= optimal_threshold).astype(int)
-
-    # Calculate metrics using the thresholded predictions and true labels
-    # Note: AUROC and AUPRC should still use the raw probabilities
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        all_true_labels, predicted_labels, average='binary', zero_division=0
+    # *** Use the new unified metric calculation function ***
+    results_df = calculate_metrics_with_optimal_threshold(
+        all_true_labels,
+        all_probabilities,
+        test_name,
+        optimal_threshold
     )
-    # Calculate specificity (True Negative Rate)
-    tn = np.sum((all_true_labels == 0) & (predicted_labels == 0))
-    fp = np.sum((all_true_labels == 0) & (predicted_labels == 1))
-    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-
-    accuracy = accuracy_score(all_true_labels, predicted_labels)
-    kappa = cohen_kappa_score(all_true_labels, predicted_labels)
-    auroc = roc_auc_score(all_true_labels, positive_probs)
-    auprc = average_precision_score(all_true_labels, positive_probs)
-
-    results_df = pd.DataFrame({
-        'Model': [test_name],
-        'Precision': [precision],
-        'Recall': [recall],
-        'F1 Score': [f1],
-        'Specificity': [specificity],
-        'AUROC': [auroc],
-        'AUPRC': [auprc],
-        'Accuracy': [accuracy],
-        "Cohen's Kappa": [kappa] # Use the overall kappa here
-    })
 
     # Plot confusion matrix using the thresholded predictions
-    plot_cm(predicted_labels, all_true_labels, test_name) # Ensure plot_cm takes predicted labels
+    # We need the predicted labels for the confusion matrix
+    positive_probs = all_probabilities[:, 1]
+    predicted_labels = (positive_probs >= optimal_threshold).astype(int)
+    plot_cm(predicted_labels, all_true_labels, test_name)
 
     return results_df
 
@@ -877,7 +889,7 @@ def Transformer_engine(
 
         # Training loop with early stopping
         best_loss = float('inf')
-        patience = 15
+        patience = 10
         patience_counter = 0
         
         for epoch in range(num_epoch):
@@ -964,74 +976,154 @@ def Transformer_engine(
 
     return model
 
-def Transformer_eval(transformer_model, dataloader_test, list_true_stages_test, test_name):
-    """Evaluate a Transformer model using a DataLoader."""
+def Transformer_eval(
+    transformer_model: torch.nn.Module,
+    dataloader_test: DataLoader,
+    list_true_stages_test: List[np.ndarray],
+    test_name: str,
+    optimal_threshold: float
+) -> pd.DataFrame:
+    """
+    Evaluate a Transformer model using a DataLoader, applying an optimal threshold.
+
+    Args:
+        transformer_model: The trained Transformer model.
+        dataloader_test: DataLoader for the test data.
+        list_true_stages_test: List of true label arrays for test subjects.
+        test_name: Name for the test run (used in results).
+        optimal_threshold: Classification threshold to use.
+
+    Returns:
+        DataFrame containing evaluation metrics.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transformer_model.eval()
     transformer_model.to(device)
+    logging.info(f"Evaluating {test_name} using threshold: {optimal_threshold:.4f}")
 
-    predicted_probabilities_test = []
-    valid_true_labels = []
-    kappa = []
-    
+    predicted_probabilities_list: List[np.ndarray] = []
+    valid_true_labels_list: List[np.ndarray] = []
     seq_idx = 0
-    
+
     with torch.no_grad():
         for batch in dataloader_test:
-            # Get data from batch
-            sample = batch["sample"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            lengths = batch["length"]
-            
-            # Forward pass with attention mask
-            outputs = transformer_model(
-                sample, 
-                lengths,
-                src_key_padding_mask=attention_mask
-            )
-            
+            sample = batch["sample"].to(device, non_blocking=True)
+            attention_mask = batch["attention_mask"].to(device) # Shape (batch, max_len_in_batch)
+            lengths = batch["length"] # Original lengths, shape (batch,)
+
+            try:
+                outputs = transformer_model(
+                    sample,
+                    lengths,
+                    src_key_padding_mask=attention_mask
+                ) # Shape: (batch_size, max_len_in_batch, num_classes)
+            except Exception as e:
+                logging.error(f"Error during Transformer inference in eval: {e}", exc_info=True)
+                continue
+
             batch_size = outputs.size(0)
             for b in range(batch_size):
-                # Get sequence length for this sample
-                seq_len = lengths[b].item()
-                true_labels = list_true_stages_test[seq_idx][:seq_len]  # Truncate to sequence length
-                
-                # Use attention mask to get valid predictions
-                valid_positions = ~attention_mask[b, :seq_len]  # Only use positions up to sequence length
-                valid_pred = outputs[b, :seq_len][valid_positions].cpu().numpy()
-                
-                # Ensure predictions and true labels have same length
-                min_len = min(len(true_labels), len(valid_pred))
-                true_labels = true_labels[:min_len]
-                valid_pred = valid_pred[:min_len]
-                
-                # Store predictions and labels
-                predicted_probabilities_test.append(valid_pred)
-                valid_true_labels.append(true_labels)
-                
-                # Calculate kappa using matched lengths
-                pred_labels = valid_pred.argmax(axis=-1)
-                kappa.append(cohen_kappa_score(true_labels, pred_labels))
-                
-                seq_idx += 1
+                # Get the original length reported by the dataloader for this sequence
+                reported_len: int = lengths[b].item()
 
-    # Concatenate predictions and true labels
-    array_predict = np.concatenate([p.argmax(axis=-1) for p in predicted_probabilities_test])
-    array_true = np.concatenate(valid_true_labels)
-    array_probabilities = np.concatenate(predicted_probabilities_test)
+                # Check if seq_idx is valid for list_true_stages_test
+                if seq_idx >= len(list_true_stages_test):
+                     logging.warning(f"Sequence index {seq_idx} out of bounds for list_true_stages_test (length {len(list_true_stages_test)}). Skipping.")
+                     seq_idx += 1
+                     continue
 
-    # Calculate metrics using both predictions and probabilities
-    transformer_test_results_df = calculate_metrics(
-        array_true, 
-        array_probabilities,  # Use probabilities for metrics that need them
-        test_name
+                # Get the actual true labels array and its length
+                true_labels_full: np.ndarray = list_true_stages_test[seq_idx]
+                actual_label_len: int = len(true_labels_full)
+
+                # Determine the effective sequence length to use, ensuring consistency
+                # Use the minimum of the reported length and the actual label length
+                effective_seq_len: int = min(reported_len, actual_label_len)
+
+                # Log a warning if there's a mismatch
+                if reported_len != actual_label_len:
+                    logging.warning(f"Length mismatch for seq_idx {seq_idx}: Reported length ({reported_len}) != Actual label length ({actual_label_len}). Using effective length: {effective_seq_len}.")
+
+                # Skip if effective length is zero
+                if effective_seq_len == 0:
+                    logging.warning(f"Skipping seq_idx {seq_idx} due to zero effective length.")
+                    seq_idx += 1
+                    continue
+
+                # Slice true labels using the effective length
+                true_labels: np.ndarray = true_labels_full[:effective_seq_len]
+
+                # Get the boolean mask for valid positions using the effective length
+                max_len_in_batch: int = attention_mask.shape[1]
+                if effective_seq_len > max_len_in_batch:
+                     # This case should ideally not happen if dataloader is correct
+                     logging.warning(f"Effective seq_len ({effective_seq_len}) > max_len_in_batch ({max_len_in_batch}) for seq_idx {seq_idx}. Clamping effective_seq_len.")
+                     effective_seq_len = max_len_in_batch # Clamp
+
+                # Slice the attention mask up to effective_seq_len before inverting
+                mask_for_valid_indices: torch.Tensor = ~attention_mask[b, :effective_seq_len] # Shape (effective_seq_len,)
+
+                # Get model outputs corresponding to the effective sequence length
+                outputs_seq: torch.Tensor = outputs[b, :effective_seq_len] # Shape (effective_seq_len, num_classes)
+
+                # --- Sanity Checks (Optional but helpful for debugging) ---
+                if mask_for_valid_indices.shape[0] != outputs_seq.shape[0]:
+                    logging.error(f"Internal Check Failed (Mask vs Output): Mask length ({mask_for_valid_indices.shape[0]}) != Output sequence length ({outputs_seq.shape[0]}) for seq_idx {seq_idx}. Skipping.")
+                    seq_idx += 1
+                    continue
+                if mask_for_valid_indices.shape[0] != len(true_labels):
+                     logging.error(f"Internal Check Failed (Mask vs Labels): Mask length ({mask_for_valid_indices.shape[0]}) != True labels length ({len(true_labels)}) for seq_idx {seq_idx}. Skipping.")
+                     seq_idx += 1
+                     continue
+                # --- End Sanity Checks ---
+
+                # Apply the mask to get outputs only for valid positions
+                valid_outputs: torch.Tensor = outputs_seq[mask_for_valid_indices]
+
+                if valid_outputs.shape[0] == 0:
+                    logging.warning(f"Sequence {seq_idx} had no valid positions after masking (effective_seq_len={effective_seq_len}).")
+                    seq_idx += 1
+                    continue
+
+                # Apply the SAME mask to the true labels
+                true_labels_valid: np.ndarray = true_labels[mask_for_valid_indices.cpu().numpy()]
+
+                # Apply softmax to get probabilities for valid positions
+                probs: np.ndarray = torch.softmax(valid_outputs, dim=-1).cpu().numpy()
+
+                # Final check: Ensure resulting probs and labels match length
+                if probs.shape[0] != len(true_labels_valid):
+                     logging.error(f"Final length mismatch! Probs: {probs.shape[0]}, Labels: {len(true_labels_valid)} for seq_idx {seq_idx}. Skipping.")
+                     seq_idx += 1
+                     continue
+
+                predicted_probabilities_list.append(probs)
+                valid_true_labels_list.append(true_labels_valid)
+
+                seq_idx += 1 # Increment sequence index
+
+    if not valid_true_labels_list:
+        logging.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
+        return pd.DataFrame(columns=['Model', 'Precision', 'Recall', 'F1 Score', 'Specificity', 'AUROC', 'AUPRC', 'Accuracy', "Cohen's Kappa"])
+
+    # Concatenate all probabilities and true labels
+    all_probabilities: np.ndarray = np.concatenate(predicted_probabilities_list)
+    all_true_labels: np.ndarray = np.concatenate(valid_true_labels_list)
+
+    # Use the unified metric calculation function
+    results_df = calculate_metrics_with_optimal_threshold(
+        all_true_labels,
+        all_probabilities,
+        test_name,
+        optimal_threshold
     )
-    transformer_test_results_df["Cohen's Kappa"] = np.mean(kappa)
-    
-    # Plot confusion matrix using predictions
-    plot_cm(array_predict, array_true, test_name)
-    
-    return transformer_test_results_df
+
+    # Plot confusion matrix using the thresholded predictions
+    positive_probs = all_probabilities[:, 1]
+    predicted_labels = (positive_probs >= optimal_threshold).astype(int)
+    plot_cm(predicted_labels, all_true_labels, test_name)
+
+    return results_df
 
 def Transformer_dataloader(list_probabilities_subject, lengths, list_true_stages, batch_size=16):
     """Create a DataLoader for Transformer models.
