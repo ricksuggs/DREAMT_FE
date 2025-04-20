@@ -11,9 +11,8 @@ import numpy as np
 import random
 import shap
 import logging
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.info("Importing modules")
 
 from utils import *
@@ -108,41 +107,41 @@ if 'LightGBM' in steps:
     shap_values = explainer.shap_values(X_train)
     # shap.summary_plot(shap_values, X_train, plot_type="bar", feature_names=final_features)
 
-if 'LightGBM_LSTM_CrossEntropy' in steps or 'LightGBM_LSTM_Focal' in steps:
-    logging.info("Creating LSTM dataset for LightGBM")
-    dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
-    dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+    if 'LightGBM_LSTM_CrossEntropy' in steps or 'LightGBM_LSTM_Focal' in steps:
+        logging.info("Creating LSTM dataset for LightGBM")
+        dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
+        dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-    if 'LightGBM_LSTM_CrossEntropy' in steps:
+        if 'LightGBM_LSTM_CrossEntropy' in steps:
 
-        logging.info("Running LSTM model for LightGBM_CrossEntropy")
-        LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
+            logging.info("Running LSTM model for LightGBM_CrossEntropy")
+            LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
 
-        logging.info("Evaluating LSTM model for LightGBM_CrossEntropy")
-        lgb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_CrossEntropy')
+            logging.info("Evaluating LSTM model for LightGBM_CrossEntropy")
+            lgb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_CrossEntropy')
 
-    if 'LightGBM_LSTM_Focal' in steps:
+        if 'LightGBM_LSTM_Focal' in steps:
 
-        logging.info("Running LSTM model for LightGBM_Focal")
-        LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
+            logging.info("Running LSTM model for LightGBM_Focal")
+            LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
 
-        logging.info("Evaluating LSTM model for LightGBM_Focal")
-        lgb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_Focal')
+            logging.info("Evaluating LSTM model for LightGBM_Focal")
+            lgb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_Focal')
 
-if 'LightGBM_Transformer' in steps:
-    logging.info("Creating Transformer dataset for LightGBM")
-    dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
-    dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+    if 'LightGBM_Transformer' in steps:
+        logging.info("Creating Transformer dataset for LightGBM")
+        dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+        dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-    logging.info("Running Transformer model for LightGBM post-processing")
-    transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
-    lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
+        logging.info("Running Transformer model for LightGBM post-processing")
+        transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
+        lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
 
-if 'LightGBM_TST' in steps:
-    logging.info("Running TST model for LightGBM post-processing")
-    tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
+    if 'LightGBM_TST' in steps:
+        logging.info("Running TST model for LightGBM post-processing")
+        tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
 
-    lgb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'LightGBM_TST')
+        lgb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'LightGBM_TST')
 
 if 'GPBoost' in steps:
     logging.info("Running GPBoost model")
@@ -164,38 +163,38 @@ if 'GPBoost' in steps:
         test_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
     gpb_test_results_df = GPBoost_result(final_gpb_model, X_test, y_test, group_test, prob_ls_test, true_ls_test)
 
-if 'GPBoost_LSTM_CrossEntropy' in steps or 'GPBoost_LSTM_Focal' in steps:
+    if 'GPBoost_LSTM_CrossEntropy' in steps or 'GPBoost_LSTM_Focal' in steps:
 
-    logging.info("Creating LSTM dataset for GPBoost_CrossEntropy")
-    dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
-    dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+        logging.info("Creating LSTM dataset for GPBoost_CrossEntropy")
+        dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
+        dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-    if 'GPBoost_LSTM_CrossEntropy' in steps:
+        if 'GPBoost_LSTM_CrossEntropy' in steps:
 
-        logging.info("Running LSTM model for GPBoost_CrossEntropy")
-        LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
-        gpb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_CrossEntropy')
+            logging.info("Running LSTM model for GPBoost_CrossEntropy")
+            LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
+            gpb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_CrossEntropy')
 
-    if 'GPBoost_LSTM_Focal' in steps:
+        if 'GPBoost_LSTM_Focal' in steps:
 
-        logging.info("Running LSTM model for GPBoost_Focal")
-        LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
-        gpb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_Focal')
+            logging.info("Running LSTM model for GPBoost_Focal")
+            LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
+            gpb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_Focal')
 
-if 'GPBoost_Transformer' in steps:
-    logging.info("Creating Transformer dataset for GPBoost post-processing")
-    dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
-    dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+    if 'GPBoost_Transformer' in steps:
+        logging.info("Creating Transformer dataset for GPBoost post-processing")
+        dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+        dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-    logging.info("Running Transformer model for GPBoost post-processing")
-    transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
-    gpb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'GPBoost_Transformer')
+        logging.info("Running Transformer model for GPBoost post-processing")
+        transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
+        gpb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'GPBoost_Transformer')
 
-if 'GPBoost_TST' in steps:
-    logging.info("Running TST model for GPBoost post-processing")
-    tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
+    if 'GPBoost_TST' in steps:
+        logging.info("Running TST model for GPBoost post-processing")
+        tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
 
-    gpb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'GPBoost_TST')
+        gpb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'GPBoost_TST')
 
 # overall result
 overall_result = pd.concat([
