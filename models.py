@@ -19,7 +19,7 @@ License:
 
 import pandas as pd
 import numpy as np
-from sklearn.metrics import f1_score, cohen_kappa_score
+from sklearn.metrics import average_precision_score, f1_score, cohen_kappa_score, precision_recall_fscore_support
 import lightgbm as lgb
 import gpboost as gpb
 from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
@@ -32,7 +32,7 @@ import logging
 from tsai.all import TSDatasets, TSDataLoaders, TSStandardize, TST, Learner
 from fastai.callback.tracker import EarlyStoppingCallback
 from fastai.metrics import accuracy
-from typing import List, Optional
+from typing import Dict, List, Optional, Union
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -507,7 +507,13 @@ def LSTM_dataloader(list_probabilities_subject, lengths, list_true_stages, batch
     return dataloader
 
 
-def LSTM_engine(dataloader_train, num_epoch, hidden_layer_size=32, learning_rate = 0.001, loss='cross_entropy'):
+def LSTM_engine(
+        dataloader_train, 
+        num_epoch, 
+        hidden_layer_size=32, 
+        learning_rate = 0.001, 
+        loss='cross_entropy', 
+        class_ratios=None):
     """
     Train a LSTM model using a DataLoader.
     
@@ -523,6 +529,8 @@ def LSTM_engine(dataloader_train, num_epoch, hidden_layer_size=32, learning_rate
         Learning rate for the optimizer (default is 0.001).
     loss : str, optional
         Loss function to use ('cross_entropy' or 'focal', default is 'cross_entropy').
+    class_ratios : float, optional
+        Class ratios for focal loss (default is None).
 
     Returns
     -------
@@ -541,18 +549,11 @@ def LSTM_engine(dataloader_train, num_epoch, hidden_layer_size=32, learning_rate
     if loss == 'cross_entropy':
         loss_function = nn.CrossEntropyLoss()
     elif loss == 'focal':
-        # Calculate class ratio
-        sample_batch = next(iter(dataloader_train))
-        labels = sample_batch["label"]
-        class_ratio = (labels == 1).float().mean().item()
-            
-        logging.info(f"Class ratio (positive class): {class_ratio:.3f}")
-
         # Initialize focal loss
         loss_function = FocalLoss(
-            alpha=class_ratio,
+            class_ratios=class_ratios,
             gamma=2.0,
-            label_smoothing=0.1
+            label_smoothing=0.0
         ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
@@ -599,109 +600,220 @@ def LSTM_engine(dataloader_train, num_epoch, hidden_layer_size=32, learning_rate
     return model
 
 
-def LSTM_eval(lstm_model, dataloader_test, list_true_stages_test, test_name):
+def LSTM_eval(
+    lstm_model: torch.nn.Module,
+    dataloader_test: DataLoader,
+    list_true_stages_test: List[np.ndarray],
+    test_name: str,
+    optimal_threshold: float = 0.5 # Add optimal_threshold parameter
+) -> pd.DataFrame:
     """
-    Evaluate a LSTM model using a DataLoader.
-    
-    Parameters
-    ----------
-    lstm_model : BiLSTMPModel
-        Trained LSTM model.
-    dataloader_test : DataLoader
-        DataLoader for the test data.
-    list_true_stages_test : list
-        List of true labels for the test data.
+    Evaluate an LSTM model using a DataLoader, applying an optimal threshold.
 
-    Returns
-    -------
-    lstm_test_results_df : DataFrame
-        Dataframe with evaluation metrics.
+    Args:
+        lstm_model (torch.nn.Module): The trained LSTM model.
+        dataloader_test (DataLoader): DataLoader for the test data.
+        list_true_stages_test (List[np.ndarray]): List of true label arrays for test subjects.
+        test_name (str): Name for the test run (used in results).
+        optimal_threshold (float): Classification threshold to use for metrics like F1, Precision, Recall.
+
+    Returns:
+        pd.DataFrame: DataFrame containing evaluation metrics.
     """
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    lstm_model.eval()  # Set the model to evaluation mode
+    lstm_model.eval()
     lstm_model.to(device)
+    logging.info(f"Evaluating {test_name} using threshold: {optimal_threshold:.4f}")
 
-    predicted_probabilities_test = []
-    kappa = []
+    predicted_probabilities_list = []
+    valid_true_labels_list = []
+    seq_idx = 0
 
-    with torch.no_grad():  # No need to track the gradients
+    with torch.no_grad():
         for batch in dataloader_test:
-            sample = batch["sample"].to(device)
-            length = batch["length"]
-            label = batch["label"].to(device)
+            sample = batch["sample"].to(device, non_blocking=True)
+            length = batch["length"] # Stays on CPU
+            # label = batch["label"].to(device, non_blocking=True) # Labels not needed directly for eval if using list_true_stages_test
 
-            # Forward pass
-            outputs = lstm_model(sample, length)
+            outputs = lstm_model(sample, length) # Shape: (batch_size, seq_len, num_classes)
 
-            predicted_probabilities_test.extend(outputs.cpu().numpy())
+            batch_size = outputs.size(0)
+            for b in range(batch_size):
+                seq_len = length[b].item()
+                # Ensure we don't index beyond the actual length of the true labels list
+                if seq_idx >= len(list_true_stages_test):
+                     logging.warning(f"Sequence index {seq_idx} out of bounds for list_true_stages_test (length {len(list_true_stages_test)}). Skipping.")
+                     seq_idx += 1
+                     continue
 
-            # Calculating Cohen's Kappa Score, ensure labels and predictions are on CPU
-            kappa.append(
-                cohen_kappa_score(
-                    label.cpu().numpy()[0], np.argmax(outputs.cpu().numpy()[0], axis=1)
-                )
-            )
+                true_labels = list_true_stages_test[seq_idx][:seq_len]
 
-    array_true = np.concatenate(list_true_stages_test)
-    array_predict = np.concatenate(predicted_probabilities_test)
+                # Get predictions for this sequence up to its actual length
+                # Apply softmax to get probabilities
+                probs = torch.softmax(outputs[b, :seq_len, :], dim=-1).cpu().numpy()
 
-    lstm_test_results_df = calculate_metrics(array_true, array_predict, test_name)
-    lstm_test_results_df["Cohen's Kappa"] = np.average(kappa)
-    plot_cm(array_predict, list_true_stages_test, test_name)
+                # Ensure predictions and true labels have the same length after potential truncation
+                min_len = min(len(true_labels), len(probs))
+                true_labels = true_labels[:min_len]
+                probs = probs[:min_len]
 
-    return lstm_test_results_df
+                if len(true_labels) > 0: # Only append if there are valid labels/preds
+                    predicted_probabilities_list.append(probs)
+                    valid_true_labels_list.append(true_labels)
+                else:
+                    logging.warning(f"Sequence {seq_idx} resulted in zero length after alignment.")
+
+                seq_idx += 1
+
+    if not valid_true_labels_list:
+        logging.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
+        # Return an empty or placeholder DataFrame
+        return pd.DataFrame(columns=['Model', 'Precision', 'Recall', 'F1 Score', 'Specificity', 'AUROC', 'AUPRC', 'Accuracy', "Cohen's Kappa"])
+
+
+    # Concatenate all probabilities and true labels
+    all_probabilities = np.concatenate(predicted_probabilities_list)
+    all_true_labels = np.concatenate(valid_true_labels_list)
+
+    # Get probabilities for the positive class (class 1)
+    positive_probs = all_probabilities[:, 1]
+
+    # Apply the optimal threshold to get predicted labels
+    predicted_labels = (positive_probs >= optimal_threshold).astype(int)
+
+    # Calculate metrics using the thresholded predictions and true labels
+    # Note: AUROC and AUPRC should still use the raw probabilities
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        all_true_labels, predicted_labels, average='binary', zero_division=0
+    )
+    # Calculate specificity (True Negative Rate)
+    tn = np.sum((all_true_labels == 0) & (predicted_labels == 0))
+    fp = np.sum((all_true_labels == 0) & (predicted_labels == 1))
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+
+    accuracy = accuracy_score(all_true_labels, predicted_labels)
+    kappa = cohen_kappa_score(all_true_labels, predicted_labels)
+    auroc = roc_auc_score(all_true_labels, positive_probs)
+    auprc = average_precision_score(all_true_labels, positive_probs)
+
+    results_df = pd.DataFrame({
+        'Model': [test_name],
+        'Precision': [precision],
+        'Recall': [recall],
+        'F1 Score': [f1],
+        'Specificity': [specificity],
+        'AUROC': [auroc],
+        'AUPRC': [auprc],
+        'Accuracy': [accuracy],
+        "Cohen's Kappa": [kappa] # Use the overall kappa here
+    })
+
+    # Plot confusion matrix using the thresholded predictions
+    plot_cm(predicted_labels, all_true_labels, test_name) # Ensure plot_cm takes predicted labels
+
+    return results_df
 
 class FocalLoss(nn.Module):
-    """Focal Loss for handling class imbalance.
-    
-    Attributes:
-        alpha (float): Weight for positive class (between 0-1)
-        gamma (float): Focusing parameter for modulating loss (≥ 0)
-        label_smoothing (float): Label smoothing factor
     """
-    
-    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, label_smoothing: float = 0.1):
+    Focal Loss implementation with class balancing and adaptive gamma.
+
+    Attributes:
+        class_ratios (Dict[int, float]): Class distribution ratios.
+        gamma (float): Focusing parameter.
+        alpha (torch.Tensor): Class balancing factor tensor.
+        label_smoothing (float): Label smoothing parameter.
+        adaptive_gamma (bool): Flag to enable adaptive gamma.
+    """
+    def __init__(self, class_ratios: Dict[Union[int, np.integer], float], gamma: float = 2.0,
+                 label_smoothing: float = 0.1, adaptive_gamma: bool = True):
+        """
+        Initializes the FocalLoss module.
+
+        Args:
+            class_ratios (Dict[Union[int, np.integer], float]): A dictionary mapping
+                class indices (int or numpy integer types) to their ratios
+                in the dataset (float or numpy float types).
+            gamma (float, optional): The focusing parameter gamma. Defaults to 2.0.
+            label_smoothing (float, optional): The label smoothing factor.
+                Defaults to 0.1.
+            adaptive_gamma (bool, optional): Whether to use adaptive gamma based
+                on prediction confidence. Defaults to True.
+
+        Raises:
+            TypeError: If class_ratios is not a dictionary.
+            ValueError: If class_ratios keys are not integers (Python or NumPy)
+                or values are not floats (Python or NumPy).
+        """
         super().__init__()
-        self.alpha = alpha
+        if not isinstance(class_ratios, dict):
+            raise TypeError("class_ratios must be a dictionary")
+
+        # Allow both standard int/float and numpy int/float types
+        if not all(isinstance(k, (int, np.integer)) and isinstance(v, (float, np.floating))
+                   for k, v in class_ratios.items()):
+            raise ValueError(
+                "class_ratios keys must be int or np.integer, and values must be float or np.floating"
+            )
+
+        self.class_ratios = class_ratios
         self.gamma = gamma
         self.label_smoothing = label_smoothing
-        
+        self.adaptive_gamma = adaptive_gamma
+
+        # Calculate alpha based on effective number of samples
+        beta = 0.9999
+        # Ensure class_ratios values are sorted by key (converted to int) for consistent tensor creation
+        sorted_keys = sorted(class_ratios.keys())
+        sorted_ratios = [float(class_ratios[k]) for k in sorted_keys]
+        effective_num = 1.0 - torch.pow(beta, torch.tensor(sorted_ratios, dtype=torch.float64))
+        weights = (1.0 - beta) / effective_num
+        self.alpha = weights / torch.sum(weights) # Normalize weights
+
+        logging.info(f"Focal loss initialized with gamma={gamma}, alpha={self.alpha.tolist()}, label_smoothing={label_smoothing}, adaptive_gamma={adaptive_gamma}")
+
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Calculate focal loss.
-        
-        Args:
-            inputs: Model predictions of shape [N, C]
-            targets: Ground truth labels of shape [N]
-            
-        Returns:
-            Calculated focal loss
         """
-        # Apply softmax to get probabilities
-        ce_loss = F.cross_entropy(
-            inputs, 
-            targets, 
-            reduction='none',
-            label_smoothing=self.label_smoothing
-        )
-        
-        # Get probabilities for true class
+        Calculate focal loss.
+
+        Args:
+            inputs (torch.Tensor): Model predictions of shape (N, C), where N is
+                batch size and C is number of classes.
+            targets (torch.Tensor): Ground truth labels of shape (N,).
+
+        Returns:
+            torch.Tensor: The calculated mean focal loss value.
+
+        Raises:
+            RuntimeError: If input and target tensors are on different devices.
+        """
+        if inputs.device != targets.device:
+             raise RuntimeError(f"Input ({inputs.device}) and target ({targets.device}) tensors must be on the same device.")
+
+        device = inputs.device
+        # Move alpha tensor to the same device as inputs and targets
+        alpha_weights = self.alpha.to(device=device, dtype=inputs.dtype)
+
+        # Calculate Cross Entropy loss without reduction
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none', label_smoothing=self.label_smoothing)
+
+        # Calculate pt (probability of the true class)
         pt = torch.exp(-ce_loss)
-        
-        # Calculate focal weights
-        focal_weight = (1 - pt) ** self.gamma
-        
-        # Apply alpha weighting
-        alpha_t = torch.where(
-            targets == 1, 
-            self.alpha * torch.ones_like(targets, dtype=torch.float32),
-            (1 - self.alpha) * torch.ones_like(targets, dtype=torch.float32)
-        )
-        
-        # Combine everything
-        loss = alpha_t * focal_weight * ce_loss
-        
-        return loss.mean()
+
+        # Calculate adaptive or fixed gamma
+        if self.adaptive_gamma:
+            # Gamma increases for harder examples (lower pt)
+            gamma = self.gamma * (1 - pt)
+        else:
+            gamma = self.gamma
+
+        # Get alpha weights for each sample based on its true class
+        # Ensure targets are long type for indexing
+        alpha_t = alpha_weights[targets.long()]
+
+        # Calculate Focal Loss
+        focal_loss = alpha_t * torch.pow((1 - pt), gamma) * ce_loss
+
+        return focal_loss.mean()
 
 def Transformer_engine(
     dataloader_train, 
@@ -711,7 +823,7 @@ def Transformer_engine(
     num_layers=2,
     learning_rate=0.0001,
     dropout=0.5,
-    class_ratio: float = None  # Add class ratio parameter
+    class_ratios=None
 ):
     """Train a Transformer model using focal loss.
     
@@ -723,7 +835,7 @@ def Transformer_engine(
         num_layers: Number of transformer layers
         learning_rate: Initial learning rate
         dropout: Dropout rate
-        class_ratio: Ratio of positive class for focal loss alpha
+        class_ratios: Class ratios for focal loss
     """
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     logging.info(f"Training on {device}")
@@ -738,17 +850,10 @@ def Transformer_engine(
             num_layers=num_layers,
             dropout=dropout
         ).to(device)
-
-        # Initialize focal loss
-        if class_ratio is None:
-            # Calculate class ratio from first batch if not provided
-            sample_batch = next(iter(dataloader_train))
-            labels = sample_batch["label"]
-            class_ratio = (labels == 1).float().mean().item()
         
         loss_function = FocalLoss(
-            alpha=class_ratio,  # Use class ratio as alpha
-            gamma=2.0,  # Standard focal loss gamma
+            class_ratios=class_ratios,
+            gamma=2.0,
             label_smoothing=0.1
         ).to(device)
 
