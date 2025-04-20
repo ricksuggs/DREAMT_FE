@@ -511,6 +511,116 @@ def calculate_metrics(y_test, y_pred_proba, model_name):
 
     return result_df
 
+def calculate_metrics_with_optimal_threshold(
+    y_true: np.ndarray,
+    y_pred_proba: np.ndarray,
+    model_name: str,
+    optimal_threshold: float
+) -> pd.DataFrame:
+    """
+    Calculates classification metrics using an optimal threshold.
+
+    Args:
+        y_true (np.ndarray): True labels (N,).
+        y_pred_proba (np.ndarray): Predicted probabilities for each class (N, C).
+                                   Assumes binary classification (C=2) and index 1
+                                   is the positive class.
+        model_name (str): Name of the model for the results DataFrame.
+        optimal_threshold (float): The probability threshold to use for
+                                   classifying the positive class.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the calculated metrics.
+    """
+    # Input validation
+    if not isinstance(y_true, np.ndarray):
+        y_true = np.asarray(y_true)
+    if not isinstance(y_pred_proba, np.ndarray):
+        y_pred_proba = np.asarray(y_pred_proba)
+    if y_pred_proba.ndim != 2 or y_pred_proba.shape[1] != 2:
+        logging.error(f"y_pred_proba for {model_name} has unexpected shape: {y_pred_proba.shape}. Expected (N, 2).")
+        # Return empty or default DataFrame
+        return pd.DataFrame([{
+            "Model": model_name, "Precision": 0.0, "Recall": 0.0, "F1 Score": 0.0,
+            "Specificity": 0.0, "AUROC": 0.0, 'AUPRC': 0.0, "Accuracy": 0.0
+        }])
+    if y_true.shape[0] != y_pred_proba.shape[0]:
+         logging.error(f"Shape mismatch for {model_name}: y_true {y_true.shape} vs y_pred_proba {y_pred_proba.shape}")
+         return pd.DataFrame([{
+            "Model": model_name, "Precision": 0.0, "Recall": 0.0, "F1 Score": 0.0,
+            "Specificity": 0.0, "AUROC": 0.0, 'AUPRC': 0.0, "Accuracy": 0.0
+        }])
+
+
+    # Get probabilities for the positive class (index 1)
+    positive_probs: np.ndarray = y_pred_proba[:, 1]
+
+    # Apply the optimal threshold
+    predicted_labels: np.ndarray = (positive_probs >= optimal_threshold).astype(int)
+
+    # Calculate threshold-dependent metrics
+    try:
+        accuracy: float = accuracy_score(y_true, predicted_labels)
+        precision: float = precision_score(y_true, predicted_labels, zero_division=0)
+        recall: float = recall_score(y_true, predicted_labels, zero_division=0) # Sensitivity
+        f1: float = f1_score(y_true, predicted_labels, zero_division=0)
+        kappa: float = cohen_kappa_score(y_true, predicted_labels) # Calculate overall Kappa
+
+        # Calculate specificity (True Negative Rate)
+        cm = confusion_matrix(y_true, predicted_labels)
+        if cm.shape == (2, 2):
+            tn, fp, fn, tp = cm.ravel()
+            specificity: float = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        else: # Handle cases where only one class is predicted or labels are single class
+            unique_labels_true = np.unique(y_true)
+            unique_labels_pred = np.unique(predicted_labels)
+            if len(unique_labels_pred) == 1:
+                if unique_labels_pred[0] == 0: # Only predicted negative
+                    specificity = 1.0 if 0 in unique_labels_true else 0.0 # Check if true negatives exist
+                else: # Only predicted positive
+                    specificity = 0.0
+            elif len(unique_labels_true) == 1: # Only one true class
+                 specificity = 1.0 if unique_labels_true[0] == 0 else 0.0 # Specificity is 1 if only true negatives exist
+            else: # Should not happen with binary labels, but default to 0
+                specificity = 0.0
+                logging.warning(f"Unexpected confusion matrix shape: {cm.shape} for model {model_name}. Specificity set to 0.")
+
+    except Exception as e:
+        logging.error(f"Error calculating threshold-dependent metrics for {model_name}: {e}", exc_info=True)
+        accuracy, precision, recall, f1, specificity, kappa = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+
+    # Calculate threshold-independent metrics (using probabilities)
+    try:
+        auroc: float = roc_auc_score(y_true, positive_probs)
+        precisions_pr, recalls_pr, _ = precision_recall_curve(y_true, positive_probs)
+        # Ensure recalls_pr and precisions_pr are sorted correctly for AUC calculation
+        # The curve function usually returns them sorted by threshold, which might not be monotonic in recall
+        # Sort by recall for AUC calculation
+        sort_indices = np.argsort(recalls_pr)
+        auprc: float = auc(recalls_pr[sort_indices], precisions_pr[sort_indices])
+    except ValueError as e:
+         logging.warning(f"Could not calculate AUROC/AUPRC for {model_name} (possibly only one class present): {e}")
+         auroc, auprc = 0.0, 0.0 # Assign default value if calculation fails (e.g., only one class in y_true)
+    except Exception as e:
+        logging.error(f"Error calculating threshold-independent metrics for {model_name}: {e}", exc_info=True)
+        auroc, auprc = 0.0, 0.0
+
+    results = {
+        "Model": model_name,
+        "Precision": precision,
+        "Recall": recall,
+        "F1 Score": f1,
+        "Specificity": specificity,
+        "AUROC": auroc,
+        'AUPRC': auprc,
+        "Accuracy": accuracy,
+        "Cohen's Kappa": kappa # Include overall Kappa here
+    }
+
+    result_df = pd.DataFrame([results]) # Create DataFrame from single dict
+
+    return result_df
+
 
 def calculate_kappa(list_probabilities_subject, list_true_stages):
     """
