@@ -1,9 +1,12 @@
 # load packages
 import pandas as pd
 import numpy as np
-import random
 import shap
+import logging
 from sklearn.model_selection import KFold
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.info("Importing modules")
 
 from utils import *
 from models import *
@@ -13,6 +16,7 @@ import warnings
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 np.random.seed(0)
 
@@ -22,13 +26,14 @@ quality_df_dir = './results/quality_scores_per_subject.csv'
 features_dir = "dataset_sample/features_df/"
 info_dir = "dataset_sample/participant_info.csv"
 
+logging.info("Preparing the data")
 clean_df, new_features, good_quality_sids = data_preparation(
     threshold = 0.2, 
     quality_df_dir = quality_df_dir,
     features_dir = features_dir,
     info_dir = info_dir)
 
-# Split data to train, validation, and test set
+logging.info("Splitting data into train, validation, and test sets")
 SW_df, final_features = split_data(clean_df, good_quality_sids, new_features)
 print(SW_df.shape)
 print(SW_df.Sleep_Stage.value_counts())
@@ -41,9 +46,23 @@ group_variable = get_variable(group_variables, idx=0)
 print(len(final_features))
 result_dfs = []
 
-# Perform the split
+steps = [
+    'LightGBM', 
+    'LightGBM_LSTM_CrossEntropy',
+    'LightGBM_LSTM_Focal',
+    'LightGBM_Transformer',
+    'LightGBM_TST',
+    'GPBoost',
+    'GPBoost_LSTM_CrossEntropy',
+    'GPBoost_LSTM_Focal',
+    'GPBoost_Transformer',
+    'GPBoost_TST', 
+]
+
+logging.info("Performing k-fold cross-validation splitting")
 for fold, (trainval_idx, test_idx) in enumerate(kf.split(good_quality_sids)):
-    # Now split trainval into training and validation
+    
+    logging.info("Splitting data into train, validation, and test sets")
     # Since trainval_idx corresponds to 64 subjects, we'll use the first 48 for training and the next 16 for validation
     train_sids = [good_quality_sids[idx] for idx in trainval_idx[:54]]
     val_sids = [good_quality_sids[idx] for idx in trainval_idx[54:]]
@@ -55,64 +74,145 @@ for fold, (trainval_idx, test_idx) in enumerate(kf.split(good_quality_sids)):
     X_val, y_val, group_val = train_test_split(SW_df, val_sids, final_features, group_variable)
     X_test, y_test, group_test = train_test_split(SW_df, test_sids, final_features, group_variable)
 
-    # Resample all the data
+    logging.info("Resampling the training data")
     X_train_resampled, y_train_resampled, group_train_resampled = resample_data(X_train, y_train, group_train, group_variable)
 
-    # Run LightGBM model
-    final_lgb_model = LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val)
-    # calculate training scores
-    prob_ls_train, len_train, true_ls_train = compute_probabilities(
-        train_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable)
-    lgb_train_results_df = LightGBM_result(final_lgb_model, X_train, y_train, prob_ls_train, true_ls_train)
+    lgb_test_results_df = None
+    lgb_lstm_cross_entropy_test_results_df = None
+    lgb_lstm_focal_test_results_df = None
+    lgb_transformer_test_results_df = None
+    lgb_tst_test_results_df = None
+    gpb_test_results_df = None
+    gpb_lstm_cross_entropy_test_results_df = None
+    gpb_lstm_focal_test_results_df = None
+    gpb_transformer_test_results_df = None
+    gpb_tst_test_results_df = None
 
-    # calculate testing scores
-    prob_ls_test, len_test, true_ls_test = compute_probabilities(
-        test_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable)
-    lgb_test_results_df = LightGBM_result(final_lgb_model, X_test, y_test, prob_ls_test, true_ls_test)
+    if 'LightGBM' in steps:
+        logging.info("Running LightGBM model")
+        final_lgb_model = LightGBM_engine(X_train_resampled, y_train_resampled, X_val, y_val)
 
-    # Add LSTM for post processing
-    # create train data
-    dataloader_train = LSTM_dataloader(
-        prob_ls_train, len_train, true_ls_train, batch_size=32
-    )
+        logging.info("Calculating training scores for LightGBM model")
+        prob_ls_train, len_train, true_ls_train = compute_probabilities(
+            train_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable)
+        lgb_train_results_df = LightGBM_result(final_lgb_model, X_train, y_train, prob_ls_train, true_ls_train)
 
-    # Run LSTM model
-    LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001) # set your num_epoch
+        logging.info("Calculating validation scores for LightGBM model")
+        prob_ls_val, len_val, true_ls_val = compute_probabilities(
+            val_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable
+        )
 
-    # test LSMT model
-    dataloader_test = LSTM_dataloader(
-        prob_ls_test, len_test, true_ls_test, batch_size=1
-    )
-    lgb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM')
+        logging.info("Calculating testing scores for LightGBM model")
+        prob_ls_test, len_test, true_ls_test = compute_probabilities(
+            test_sids, SW_df, final_features, "lgb", final_lgb_model, group_variable)
+        lgb_test_results_df = LightGBM_result(final_lgb_model, X_test, y_test, prob_ls_test, true_ls_test)
 
+        logging.info("Identifying best features using SHAP")
+        explainer = shap.TreeExplainer(final_lgb_model)
+        shap_values = explainer.shap_values(X_train)
+        # shap.summary_plot(shap_values, X_train, plot_type="bar", feature_names=final_features)
 
-    # Run GPBoost model
-    final_gpb_model = GPBoost_engine(X_train_resampled, group_train_resampled, y_train_resampled, X_val, y_val, group_val)
-    # calculate training scores
-    prob_ls_train, len_train, true_ls_train = compute_probabilities(
-        train_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
-    gpb_train_results_df = GPBoost_result(final_gpb_model, X_train, y_train, group_train, prob_ls_train, true_ls_train)
+        if 'LightGBM_LSTM_CrossEntropy' in steps or 'LightGBM_LSTM_Focal' in steps:
+            logging.info("Creating LSTM dataset for LightGBM")
+            dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
+            dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
-    # calculate testing scores
-    prob_ls_test, len_test, true_ls_test = compute_probabilities(
-        test_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
-    gpb_test_results_df = GPBoost_result(final_gpb_model, X_test, y_test, group_test, prob_ls_test, true_ls_test)
+            if 'LightGBM_LSTM_CrossEntropy' in steps:
 
+                logging.info("Running LSTM model for LightGBM_CrossEntropy")
+                LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
 
-    # Get LSTM dataset
-    dataloader_train = LSTM_dataloader(
-        prob_ls_train, len_train, true_ls_train, batch_size=32
-    )
-    dataloader_test = LSTM_dataloader(
-        prob_ls_test, len_test, true_ls_test, batch_size=1
-    )
+                logging.info("Evaluating LSTM model for LightGBM_CrossEntropy")
+                lgb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_CrossEntropy')
 
-    # Run LSTM model
-    LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate = 0.001) # set your num_epoch
-    gpb_lstm_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM')
+            if 'LightGBM_LSTM_Focal' in steps:
+
+                logging.info("Running LSTM model for LightGBM_Focal")
+                LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
+
+                logging.info("Evaluating LSTM model for LightGBM_Focal")
+                lgb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_Focal')
+
+        if 'LightGBM_Transformer' in steps:
+            logging.info("Creating Transformer dataset for LightGBM")
+            dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+            dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+
+            logging.info("Running Transformer model for LightGBM post-processing")
+            transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
+            lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
+
+        if 'LightGBM_TST' in steps:
+            logging.info("Running TST model for LightGBM post-processing")
+            tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
+
+            lgb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'LightGBM_TST')
+
+    if 'GPBoost' in steps:
+        logging.info("Running GPBoost model")
+        final_gpb_model = GPBoost_engine(X_train_resampled, group_train_resampled, y_train_resampled, X_val, y_val, group_val)
+
+        logging.info("Calculating training scores for GPBoost model")
+        prob_ls_train, len_train, true_ls_train = compute_probabilities(
+            train_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
+
+        gpb_train_results_df = GPBoost_result(final_gpb_model, X_train, y_train, group_train, prob_ls_train, true_ls_train)
+
+        logging.info("Calculating validation scores for GPBoost model")
+        prob_ls_val, len_val, true_ls_val = compute_probabilities(
+            val_sids, SW_df, final_features, "gpb", final_gpb_model, group_variable
+        )
+
+        logging.info("Calculating testing scores for GPBoost model")
+        prob_ls_test, len_test, true_ls_test = compute_probabilities(
+            test_sids, SW_df, final_features, 'gpb', final_gpb_model, group_variable)
+        gpb_test_results_df = GPBoost_result(final_gpb_model, X_test, y_test, group_test, prob_ls_test, true_ls_test)
+
+        if 'GPBoost_LSTM_CrossEntropy' in steps or 'GPBoost_LSTM_Focal' in steps:
+
+            logging.info("Creating LSTM dataset for GPBoost_CrossEntropy")
+            dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
+            dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+
+            if 'GPBoost_LSTM_CrossEntropy' in steps:
+
+                logging.info("Running LSTM model for GPBoost_CrossEntropy")
+                LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
+                gpb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_CrossEntropy')
+
+            if 'GPBoost_LSTM_Focal' in steps:
+
+                logging.info("Running LSTM model for GPBoost_Focal")
+                LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
+                gpb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_Focal')
+
+        if 'GPBoost_Transformer' in steps:
+            logging.info("Creating Transformer dataset for GPBoost post-processing")
+            dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+            dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
+
+            logging.info("Running Transformer model for GPBoost post-processing")
+            transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
+            gpb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'GPBoost_Transformer')
+
+        if 'GPBoost_TST' in steps:
+            logging.info("Running TST model for GPBoost post-processing")
+            tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
+
+            gpb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'GPBoost_TST')
 
     # overall result
-    result_df = pd.concat([lgb_test_results_df, lgb_lstm_test_results_df, 
-                                gpb_test_results_df, gpb_lstm_test_results_df])
-    result_dfs.append(result_df)
-    result_df.to_csv(f'./results/fold_{fold + 1}_results_AHI.csv', index=False)
+    overall_result = pd.concat([
+        lgb_test_results_df, 
+        lgb_lstm_cross_entropy_test_results_df,
+        lgb_lstm_focal_test_results_df,
+        lgb_transformer_test_results_df,
+        lgb_tst_test_results_df,
+        gpb_test_results_df,
+        gpb_lstm_cross_entropy_test_results_df,
+        gpb_lstm_focal_test_results_df,
+        gpb_transformer_test_results_df,
+        gpb_tst_test_results_df
+    ])
+    result_dfs.append(overall_result)
+    overall_result.to_csv(f'./results/fold_{fold + 1}_results_{"__".join(group_variable)}.csv', index=False)
