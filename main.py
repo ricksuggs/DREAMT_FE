@@ -30,24 +30,20 @@ steps = [
     'LightGBM_LSTM_CrossEntropy',
     'LightGBM_LSTM_Focal',
     'LightGBM_Transformer',
-    'LightGBM_TST',
     'GPBoost',
     'GPBoost_LSTM_CrossEntropy',
     'GPBoost_LSTM_Focal',
     'GPBoost_Transformer',
-    'GPBoost_TST', 
 ]
 
 lgb_test_results_df = None
 lgb_lstm_cross_entropy_test_results_df = None
 lgb_lstm_focal_test_results_df = None
 lgb_transformer_test_results_df = None
-lgb_tst_test_results_df = None
 gpb_test_results_df = None
 gpb_lstm_cross_entropy_test_results_df = None
 gpb_lstm_focal_test_results_df = None
 gpb_transformer_test_results_df = None
-gpb_tst_test_results_df = None
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -198,12 +194,6 @@ if 'LightGBM' in steps:
             optimal_threshold=optimal_threshold_transformer # Pass the found threshold
         )
 
-    if 'LightGBM_TST' in steps:
-        logging.info("Running TST model for LightGBM post-processing")
-        tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
-
-        lgb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'LightGBM_TST')
-
 if 'GPBoost' in steps:
     logging.info("Running GPBoost model")
     final_gpb_model = GPBoost_engine(X_train_resampled, group_train_resampled, y_train_resampled, X_val, y_val, group_val)
@@ -310,24 +300,16 @@ if 'GPBoost' in steps:
             optimal_threshold=optimal_threshold_transformer # Pass the found threshold
         )
 
-    if 'GPBoost_TST' in steps:
-        logging.info("Running TST model for GPBoost post-processing")
-        tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
-
-        gpb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'GPBoost_TST')
-
 # overall result
 overall_result = pd.concat([
     lgb_test_results_df, 
     lgb_lstm_cross_entropy_test_results_df,
     lgb_lstm_focal_test_results_df,
     lgb_transformer_test_results_df,
-    lgb_tst_test_results_df,
     gpb_test_results_df,
     gpb_lstm_cross_entropy_test_results_df,
     gpb_lstm_focal_test_results_df,
     gpb_transformer_test_results_df,
-    gpb_tst_test_results_df
 ])
 print(group_variable)
 print(overall_result)
