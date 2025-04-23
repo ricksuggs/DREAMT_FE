@@ -34,8 +34,8 @@ from fastai.callback.tracker import EarlyStoppingCallback
 from fastai.metrics import accuracy
 from typing import Dict, List, Optional, Union
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logger
+logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -184,7 +184,7 @@ class SleepTransformer(nn.Module):
             src_key_padding_mask = mask
         elif src_key_padding_mask.shape[1] != x.shape[1]:
              # Handle potential shape mismatch if mask was pre-computed with different max_len
-             logging.warning(f"Adjusting src_key_padding_mask shape from {src_key_padding_mask.shape} to match input seq_len {x.shape[1]}")
+             logger.warning(f"Adjusting src_key_padding_mask shape from {src_key_padding_mask.shape} to match input seq_len {x.shape[1]}")
              max_len_in_batch = x.shape[1]
              batch_size = x.size(0)
              # Use lengths_on_device here
@@ -658,7 +658,7 @@ def LSTM_eval(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lstm_model.eval()
     lstm_model.to(device)
-    logging.info(f"Evaluating {test_name} using threshold: {optimal_threshold:.4f}")
+    logger.info(f"Evaluating {test_name} using threshold: {optimal_threshold:.4f}")
 
     predicted_probabilities_list: List[np.ndarray] = []
     valid_true_labels_list: List[np.ndarray] = []
@@ -672,14 +672,14 @@ def LSTM_eval(
             try:
                 outputs = lstm_model(sample, length) # Shape: (batch_size, seq_len, num_classes)
             except Exception as e:
-                logging.error(f"Error during LSTM inference in eval: {e}", exc_info=True)
+                logger.error(f"Error during LSTM inference in eval: {e}", exc_info=True)
                 continue # Skip batch on error
 
             batch_size = outputs.size(0)
             for b in range(batch_size):
                 seq_len = length[b].item()
                 if seq_idx >= len(list_true_stages_test):
-                     logging.warning(f"Sequence index {seq_idx} out of bounds for list_true_stages_test (length {len(list_true_stages_test)}). Skipping.")
+                     logger.warning(f"Sequence index {seq_idx} out of bounds for list_true_stages_test (length {len(list_true_stages_test)}). Skipping.")
                      seq_idx += 1
                      continue
 
@@ -697,12 +697,12 @@ def LSTM_eval(
                     predicted_probabilities_list.append(probs)
                     valid_true_labels_list.append(true_labels)
                 else:
-                    logging.warning(f"Sequence {seq_idx} resulted in zero length after alignment.")
+                    logger.warning(f"Sequence {seq_idx} resulted in zero length after alignment.")
 
                 seq_idx += 1
 
     if not valid_true_labels_list:
-        logging.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
+        logger.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
         return pd.DataFrame(columns=['Model', 'Precision', 'Recall', 'F1 Score', 'Specificity', 'AUROC', 'AUPRC', 'Accuracy', "Cohen's Kappa"])
 
     # Concatenate all probabilities and true labels
@@ -781,7 +781,7 @@ class FocalLoss(nn.Module):
         weights = (1.0 - beta) / effective_num
         self.alpha = weights / torch.sum(weights) # Normalize weights
 
-        logging.info(f"Focal loss initialized with gamma={gamma}, alpha={self.alpha.tolist()}, label_smoothing={label_smoothing}, adaptive_gamma={adaptive_gamma}")
+        logger.info(f"Focal loss initialized with gamma={gamma}, alpha={self.alpha.tolist()}, label_smoothing={label_smoothing}, adaptive_gamma={adaptive_gamma}")
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
@@ -850,7 +850,7 @@ def Transformer_engine(
         class_ratios: Class ratios for focal loss
     """
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    logging.info(f"Training on {device}")
+    logger.info(f"Training on {device}")
 
     try:
         # Initialize model
@@ -957,12 +957,12 @@ def Transformer_engine(
                 patience_counter += 1
                 
             if patience_counter >= patience:
-                logging.info(f"Early stopping triggered at epoch {epoch+1}")
+                logger.info(f"Early stopping triggered at epoch {epoch+1}")
                 break
 
             if (epoch + 1) % 5 == 0:
                 avg_accuracy = total_accuracy / num_batches
-                logging.info(
+                logger.info(
                     f"Epoch {epoch+1}/{num_epoch} - "
                     f"Loss: {avg_loss:.4f}, "
                     f"Accuracy: {avg_accuracy:.4f}, "
@@ -970,7 +970,7 @@ def Transformer_engine(
                 )
 
     except Exception as e:
-        logging.error(f"Training failed with error: {str(e)}")
+        logger.error(f"Training failed with error: {str(e)}")
         torch.cuda.empty_cache()
         raise e
 
@@ -999,7 +999,7 @@ def Transformer_eval(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transformer_model.eval()
     transformer_model.to(device)
-    logging.info(f"Evaluating {test_name} using threshold: {optimal_threshold:.4f}")
+    logger.info(f"Evaluating {test_name} using threshold: {optimal_threshold:.4f}")
 
     predicted_probabilities_list: List[np.ndarray] = []
     valid_true_labels_list: List[np.ndarray] = []
@@ -1018,7 +1018,7 @@ def Transformer_eval(
                     src_key_padding_mask=attention_mask
                 ) # Shape: (batch_size, max_len_in_batch, num_classes)
             except Exception as e:
-                logging.error(f"Error during Transformer inference in eval: {e}", exc_info=True)
+                logger.error(f"Error during Transformer inference in eval: {e}", exc_info=True)
                 continue
 
             batch_size = outputs.size(0)
@@ -1028,7 +1028,7 @@ def Transformer_eval(
 
                 # Check if seq_idx is valid for list_true_stages_test
                 if seq_idx >= len(list_true_stages_test):
-                     logging.warning(f"Sequence index {seq_idx} out of bounds for list_true_stages_test (length {len(list_true_stages_test)}). Skipping.")
+                     logger.warning(f"Sequence index {seq_idx} out of bounds for list_true_stages_test (length {len(list_true_stages_test)}). Skipping.")
                      seq_idx += 1
                      continue
 
@@ -1042,11 +1042,11 @@ def Transformer_eval(
 
                 # Log a warning if there's a mismatch
                 if reported_len != actual_label_len:
-                    logging.warning(f"Length mismatch for seq_idx {seq_idx}: Reported length ({reported_len}) != Actual label length ({actual_label_len}). Using effective length: {effective_seq_len}.")
+                    logger.warning(f"Length mismatch for seq_idx {seq_idx}: Reported length ({reported_len}) != Actual label length ({actual_label_len}). Using effective length: {effective_seq_len}.")
 
                 # Skip if effective length is zero
                 if effective_seq_len == 0:
-                    logging.warning(f"Skipping seq_idx {seq_idx} due to zero effective length.")
+                    logger.warning(f"Skipping seq_idx {seq_idx} due to zero effective length.")
                     seq_idx += 1
                     continue
 
@@ -1057,7 +1057,7 @@ def Transformer_eval(
                 max_len_in_batch: int = attention_mask.shape[1]
                 if effective_seq_len > max_len_in_batch:
                      # This case should ideally not happen if dataloader is correct
-                     logging.warning(f"Effective seq_len ({effective_seq_len}) > max_len_in_batch ({max_len_in_batch}) for seq_idx {seq_idx}. Clamping effective_seq_len.")
+                     logger.warning(f"Effective seq_len ({effective_seq_len}) > max_len_in_batch ({max_len_in_batch}) for seq_idx {seq_idx}. Clamping effective_seq_len.")
                      effective_seq_len = max_len_in_batch # Clamp
 
                 # Slice the attention mask up to effective_seq_len before inverting
@@ -1068,11 +1068,11 @@ def Transformer_eval(
 
                 # --- Sanity Checks (Optional but helpful for debugging) ---
                 if mask_for_valid_indices.shape[0] != outputs_seq.shape[0]:
-                    logging.error(f"Internal Check Failed (Mask vs Output): Mask length ({mask_for_valid_indices.shape[0]}) != Output sequence length ({outputs_seq.shape[0]}) for seq_idx {seq_idx}. Skipping.")
+                    logger.error(f"Internal Check Failed (Mask vs Output): Mask length ({mask_for_valid_indices.shape[0]}) != Output sequence length ({outputs_seq.shape[0]}) for seq_idx {seq_idx}. Skipping.")
                     seq_idx += 1
                     continue
                 if mask_for_valid_indices.shape[0] != len(true_labels):
-                     logging.error(f"Internal Check Failed (Mask vs Labels): Mask length ({mask_for_valid_indices.shape[0]}) != True labels length ({len(true_labels)}) for seq_idx {seq_idx}. Skipping.")
+                     logger.error(f"Internal Check Failed (Mask vs Labels): Mask length ({mask_for_valid_indices.shape[0]}) != True labels length ({len(true_labels)}) for seq_idx {seq_idx}. Skipping.")
                      seq_idx += 1
                      continue
                 # --- End Sanity Checks ---
@@ -1081,7 +1081,7 @@ def Transformer_eval(
                 valid_outputs: torch.Tensor = outputs_seq[mask_for_valid_indices]
 
                 if valid_outputs.shape[0] == 0:
-                    logging.warning(f"Sequence {seq_idx} had no valid positions after masking (effective_seq_len={effective_seq_len}).")
+                    logger.warning(f"Sequence {seq_idx} had no valid positions after masking (effective_seq_len={effective_seq_len}).")
                     seq_idx += 1
                     continue
 
@@ -1093,7 +1093,7 @@ def Transformer_eval(
 
                 # Final check: Ensure resulting probs and labels match length
                 if probs.shape[0] != len(true_labels_valid):
-                     logging.error(f"Final length mismatch! Probs: {probs.shape[0]}, Labels: {len(true_labels_valid)} for seq_idx {seq_idx}. Skipping.")
+                     logger.error(f"Final length mismatch! Probs: {probs.shape[0]}, Labels: {len(true_labels_valid)} for seq_idx {seq_idx}. Skipping.")
                      seq_idx += 1
                      continue
 
@@ -1103,7 +1103,7 @@ def Transformer_eval(
                 seq_idx += 1 # Increment sequence index
 
     if not valid_true_labels_list:
-        logging.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
+        logger.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
         return pd.DataFrame(columns=['Model', 'Precision', 'Recall', 'F1 Score', 'Specificity', 'AUROC', 'AUPRC', 'Accuracy', "Cohen's Kappa"])
 
     # Concatenate all probabilities and true labels
@@ -1237,48 +1237,48 @@ class SleepTSDatasets:
             labels: List of label arrays with shape (n_timesteps,)
             max_len: Optional maximum sequence length for padding
         """
-        logging.info("" + "="*50)
-        logging.info("Initializing SleepTSDatasets...")
-        logging.debug("Input validation and shape check:")
-        logging.debug(f"Number of sequences: {len(probabilities)}")
-        logging.debug(f"Number of lengths: {len(lengths)}")
-        logging.debug(f"Number of label sequences: {len(labels)}")
+        logger.info("" + "="*50)
+        logger.info("Initializing SleepTSDatasets...")
+        logger.debug("Input validation and shape check:")
+        logger.debug(f"Number of sequences: {len(probabilities)}")
+        logger.debug(f"Number of lengths: {len(lengths)}")
+        logger.debug(f"Number of label sequences: {len(labels)}")
         
         # Verify input shapes match
         assert len(probabilities) == len(lengths) == len(labels), \
             f"Mismatched input lengths: probs={len(probabilities)}, lengths={len(lengths)}, labels={len(labels)}"
         
         # Get sequence information
-        logging.debug("Sequence length analysis:")
-        logging.debug(f"Min length: {min(lengths)}")
-        logging.debug(f"Max length: {max(lengths)}")
-        logging.debug(f"Mean length: {np.mean(lengths):.2f}")
+        logger.debug("Sequence length analysis:")
+        logger.debug(f"Min length: {min(lengths)}")
+        logger.debug(f"Max length: {max(lengths)}")
+        logger.debug(f"Mean length: {np.mean(lengths):.2f}")
         
         # Set maximum sequence length
         self.max_len = max_len if max_len is not None else max(lengths)
-        logging.debug(f"Using max_len: {self.max_len}")
+        logger.debug(f"Using max_len: {self.max_len}")
         
         # Get dimensions
         n_samples = len(probabilities)
         n_vars = probabilities[0].shape[1]
-        logging.debug(f"Input dimensions:")
-        logging.debug(f"Number of samples: {n_samples}")
-        logging.debug(f"Number of variables: {n_vars}")
-        logging.debug(f"First sequence shape: {probabilities[0].shape}")
-        logging.debug(f"First label shape: {labels[0].shape}")
+        logger.debug(f"Input dimensions:")
+        logger.debug(f"Number of samples: {n_samples}")
+        logger.debug(f"Number of variables: {n_vars}")
+        logger.debug(f"First sequence shape: {probabilities[0].shape}")
+        logger.debug(f"First label shape: {labels[0].shape}")
         
         # Initialize arrays with proper shapes
-        logging.debug("Initializing arrays...")
+        logger.debug("Initializing arrays...")
         X = np.zeros((n_samples, n_vars, self.max_len))
         y = np.zeros((n_samples, self.max_len))
         
         # Process each sequence
-        logging.debug("Processing sequences:")
+        logger.debug("Processing sequences:")
         for i, (prob, length, label) in enumerate(zip(probabilities, lengths, labels)):
-            logging.debug(f"Sequence {i}:")
-            logging.debug(f"  Input shape: {prob.shape}")
-            logging.debug(f"  Length: {length}")
-            logging.debug(f"  Label shape: {label.shape}")
+            logger.debug(f"Sequence {i}:")
+            logger.debug(f"  Input shape: {prob.shape}")
+            logger.debug(f"  Length: {length}")
+            logger.debug(f"  Label shape: {label.shape}")
             
             # Verify sequence lengths match
             assert prob.shape[0] == len(label), \
@@ -1286,51 +1286,51 @@ class SleepTSDatasets:
             
             # Get current sequence length
             curr_len = min(length, self.max_len)
-            logging.debug(f"  Using length: {curr_len}")
+            logger.debug(f"  Using length: {curr_len}")
             
             # Store features and labels with padding
             X[i, :, :curr_len] = prob[:curr_len].T
             y[i, :curr_len] = label[:curr_len]
             
             # Verify data types
-            logging.debug(f"  X dtype: {X.dtype}")
-            logging.debug(f"  y dtype: {y.dtype}")
+            logger.debug(f"  X dtype: {X.dtype}")
+            logger.debug(f"  y dtype: {y.dtype}")
             
             # Log label distribution
             label_counts = np.bincount(label[:curr_len].astype(np.int64))
-            logging.debug(f"  Label distribution: {dict(zip(range(len(label_counts)), label_counts))}")
+            logger.debug(f"  Label distribution: {dict(zip(range(len(label_counts)), label_counts))}")
             
             # Progress indicator for large datasets
             if i % 10 == 0:
-                logging.debug(f"Processed {i}/{n_samples} sequences")
+                logger.debug(f"Processed {i}/{n_samples} sequences")
         
         # Verify final shapes
-        logging.debug("Final array shapes:")
-        logging.debug(f"X shape: {X.shape}")
-        logging.debug(f"y shape: {y.shape}")
+        logger.debug("Final array shapes:")
+        logger.debug(f"X shape: {X.shape}")
+        logger.debug(f"y shape: {y.shape}")
         
         # Verify no NaN values
-        logging.debug("Checking for NaN values:")
-        logging.debug(f"X NaN count: {np.isnan(X).sum()}")
-        logging.debug(f"y NaN count: {np.isnan(y).sum()}")
+        logger.debug("Checking for NaN values:")
+        logger.debug(f"X NaN count: {np.isnan(X).sum()}")
+        logger.debug(f"y NaN count: {np.isnan(y).sum()}")
         
         # Create TSDatasets
-        logging.debug("Creating TSDatasets...")
+        logger.debug("Creating TSDatasets...")
         try:
             tfms = [None, None]  # No transforms for now
             self.dsets = TSDatasets(X, y, tfms=tfms)
-            logging.debug("TSDatasets creation successful")
+            logger.debug("TSDatasets creation successful")
             
             # Log dataset properties
-            logging.debug("TSDatasets properties:")
-            logging.debug(f"Input range: [{X.min():.3f}, {X.max():.3f}]")
-            logging.debug(f"Unique labels: {np.unique(y)}")
+            logger.debug("TSDatasets properties:")
+            logger.debug(f"Input range: [{X.min():.3f}, {X.max():.3f}]")
+            logger.debug(f"Unique labels: {np.unique(y)}")
             
         except Exception as e:
-            logging.error(f"Failed to create TSDatasets: {str(e)}")
+            logger.error(f"Failed to create TSDatasets: {str(e)}")
             raise
         
-        logging.debug("="*50 + "")
+        logger.debug("="*50 + "")
 
 class SequenceCrossEntropyLoss(nn.Module):
     def __init__(self, class_ratio: float):
@@ -1435,18 +1435,18 @@ def TST_learner(
 ) -> Learner:
     """Create and train a TST model using tsai's implementation."""
     try:
-        logging.debug("Initializing TST learner with parameters:")
-        logging.debug(f"d_model: {d_model}, nhead: {nhead}, num_layers: {num_layers}")
-        logging.debug(f"dropout: {dropout}, fc_dropout: {fc_dropout}")
-        logging.debug(f"batch_size: {batch_size}, num_epochs: {num_epochs}")
+        logger.debug("Initializing TST learner with parameters:")
+        logger.debug(f"d_model: {d_model}, nhead: {nhead}, num_layers: {num_layers}")
+        logger.debug(f"dropout: {dropout}, fc_dropout: {fc_dropout}")
+        logger.debug(f"batch_size: {batch_size}, num_epochs: {num_epochs}")
         
         # Log input shapes and types
-        logging.debug("Input data shapes:")
-        logging.debug(f"Train probabilities: {len(train_probabilities)} sequences")
-        logging.debug(f"Train lengths: {len(train_lengths)} values")
-        logging.debug(f"Train labels: {len(train_labels)} sequences")
-        logging.debug(f"First train sequence shape: {train_probabilities[0].shape}")
-        logging.debug(f"First train label shape: {train_labels[0].shape}")
+        logger.debug("Input data shapes:")
+        logger.debug(f"Train probabilities: {len(train_probabilities)} sequences")
+        logger.debug(f"Train lengths: {len(train_lengths)} values")
+        logger.debug(f"Train labels: {len(train_labels)} sequences")
+        logger.debug(f"First train sequence shape: {train_probabilities[0].shape}")
+        logger.debug(f"First train label shape: {train_labels[0].shape}")
         
         # Create datasets and dataloaders
         max_len = max(max(train_lengths), max(val_lengths))
@@ -1474,14 +1474,14 @@ def TST_learner(
         # Verify dataloader shapes
         batch = next(iter(dls.train))
         x, y = batch
-        logging.debug(f"First batch shapes:")
-        logging.debug(f"Input (x) shape: {x.shape}")
-        logging.debug(f"Label (y) shape: {y.shape}")
+        logger.debug(f"First batch shapes:")
+        logger.debug(f"Input (x) shape: {x.shape}")
+        logger.debug(f"Label (y) shape: {y.shape}")
 
         # Calculate class ratio from training labels
         all_labels = np.concatenate([label for label in train_labels])
         class_ratio = np.mean(all_labels)  # Ratio of positive class
-        logging.debug(f"Class ratio (positive class): {class_ratio:.3f}")
+        logger.debug(f"Class ratio (positive class): {class_ratio:.3f}")
         
         # Create TST model with correct parameters
         model = TST(
@@ -1520,7 +1520,7 @@ def TST_learner(
         )
         
         # Train with one-cycle policy
-        logging.debug("Starting training...")
+        logger.debug("Starting training...")
         learn.fit_one_cycle(
             num_epochs,
             learning_rate,
@@ -1531,8 +1531,8 @@ def TST_learner(
         return learn
     
     except Exception as e:
-        logging.error(f"TST training failed with error: {str(e)}")
-        logging.error("Error details:", exc_info=True)
+        logger.error(f"TST training failed with error: {str(e)}")
+        logger.error("Error details:", exc_info=True)
         raise e
 
 def TST_eval(
@@ -1545,7 +1545,7 @@ def TST_eval(
     """
     Evaluate TST model performance with time-distributed predictions.
     """
-    logging.debug("Evaluating TST model performance...")
+    logger.debug("Evaluating TST model performance...")
     predictions = []
     kappa_scores = []
     processed_true_labels = []
@@ -1602,9 +1602,9 @@ def TST_eval(
                 processed_true_labels.append(true_seq)
                 
                 if seq_idx % 10 == 0:
-                    logging.debug(f"Processed sequence {batch_offset + seq_idx}")
-                    logging.debug(f"Sequence length: {curr_len}")
-                    logging.debug(f"Predictions shape: {seq_probs.shape}")
+                    logger.debug(f"Processed sequence {batch_offset + seq_idx}")
+                    logger.debug(f"Sequence length: {curr_len}")
+                    logger.debug(f"Predictions shape: {seq_probs.shape}")
     
     # Concatenate all predictions and true labels
     array_probabilities = np.concatenate(predictions)
@@ -1612,10 +1612,10 @@ def TST_eval(
     array_predict = array_probabilities.argmax(axis=-1)
     
     # Log shapes and sample values
-    logging.debug("Final evaluation arrays:")
-    logging.debug(f"Predictions shape: {array_predict.shape}")
-    logging.debug(f"True labels shape: {array_true.shape}")
-    logging.debug(f"Probabilities shape: {array_probabilities.shape}")
+    logger.debug("Final evaluation arrays:")
+    logger.debug(f"Predictions shape: {array_predict.shape}")
+    logger.debug(f"True labels shape: {array_true.shape}")
+    logger.debug(f"Probabilities shape: {array_probabilities.shape}")
     
     # Calculate and return metrics
     results_df = calculate_metrics(array_true, array_probabilities, test_name)

@@ -17,7 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 import logging
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def missingness_imputation(data):
     """Perform missingness imputation on the given data.
@@ -538,14 +538,14 @@ def calculate_metrics_with_optimal_threshold(
     if not isinstance(y_pred_proba, np.ndarray):
         y_pred_proba = np.asarray(y_pred_proba)
     if y_pred_proba.ndim != 2 or y_pred_proba.shape[1] != 2:
-        logging.error(f"y_pred_proba for {model_name} has unexpected shape: {y_pred_proba.shape}. Expected (N, 2).")
+        logger.error(f"y_pred_proba for {model_name} has unexpected shape: {y_pred_proba.shape}. Expected (N, 2).")
         # Return empty or default DataFrame
         return pd.DataFrame([{
             "Model": model_name, "Precision": 0.0, "Recall": 0.0, "F1 Score": 0.0,
             "Specificity": 0.0, "AUROC": 0.0, 'AUPRC': 0.0, "Accuracy": 0.0
         }])
     if y_true.shape[0] != y_pred_proba.shape[0]:
-         logging.error(f"Shape mismatch for {model_name}: y_true {y_true.shape} vs y_pred_proba {y_pred_proba.shape}")
+         logger.error(f"Shape mismatch for {model_name}: y_true {y_true.shape} vs y_pred_proba {y_pred_proba.shape}")
          return pd.DataFrame([{
             "Model": model_name, "Precision": 0.0, "Recall": 0.0, "F1 Score": 0.0,
             "Specificity": 0.0, "AUROC": 0.0, 'AUPRC': 0.0, "Accuracy": 0.0
@@ -583,10 +583,10 @@ def calculate_metrics_with_optimal_threshold(
                  specificity = 1.0 if unique_labels_true[0] == 0 else 0.0 # Specificity is 1 if only true negatives exist
             else: # Should not happen with binary labels, but default to 0
                 specificity = 0.0
-                logging.warning(f"Unexpected confusion matrix shape: {cm.shape} for model {model_name}. Specificity set to 0.")
+                logger.warning(f"Unexpected confusion matrix shape: {cm.shape} for model {model_name}. Specificity set to 0.")
 
     except Exception as e:
-        logging.error(f"Error calculating threshold-dependent metrics for {model_name}: {e}", exc_info=True)
+        logger.error(f"Error calculating threshold-dependent metrics for {model_name}: {e}", exc_info=True)
         accuracy, precision, recall, f1, specificity, kappa = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     # Calculate threshold-independent metrics (using probabilities)
@@ -599,10 +599,10 @@ def calculate_metrics_with_optimal_threshold(
         sort_indices = np.argsort(recalls_pr)
         auprc: float = auc(recalls_pr[sort_indices], precisions_pr[sort_indices])
     except ValueError as e:
-         logging.warning(f"Could not calculate AUROC/AUPRC for {model_name} (possibly only one class present): {e}")
+         logger.warning(f"Could not calculate AUROC/AUPRC for {model_name} (possibly only one class present): {e}")
          auroc, auprc = 0.0, 0.0 # Assign default value if calculation fails (e.g., only one class in y_true)
     except Exception as e:
-        logging.error(f"Error calculating threshold-independent metrics for {model_name}: {e}", exc_info=True)
+        logger.error(f"Error calculating threshold-independent metrics for {model_name}: {e}", exc_info=True)
         auroc, auprc = 0.0, 0.0
 
     results = {
@@ -855,9 +855,9 @@ def calculate_class_ratios(true_labels_list):
     # Calculate class ratios
     class_ratios = {cls: count/total_samples for cls, count in zip(unique, counts)}
     
-    logging.info(f"Class distribution - Total samples: {total_samples}")
+    logger.info(f"Class distribution - Total samples: {total_samples}")
     for cls, ratio in class_ratios.items():
-        logging.info(f"Class {cls}: {ratio:.3f}")
+        logger.info(f"Class {cls}: {ratio:.3f}")
         
     return class_ratios
 
@@ -880,7 +880,7 @@ def find_optimal_threshold(
     Returns:
         float: The threshold that maximizes the chosen metric on the validation set.
     """
-    logging.info(f"Finding optimal threshold using '{metric}' metric on validation set")
+    logger.info(f"Finding optimal threshold using '{metric}' metric on validation set")
     model.eval()
     all_probs = []
     all_labels = []
@@ -913,7 +913,7 @@ def find_optimal_threshold(
                 all_labels.append(label_valid.cpu().numpy())
 
     if not all_labels:
-        logging.warning("No valid labels found in validation set for threshold optimization. Returning 0.5.")
+        logger.warning("No valid labels found in validation set for threshold optimization. Returning 0.5.")
         return 0.5
 
     all_probs = np.concatenate(all_probs)
@@ -930,12 +930,12 @@ def find_optimal_threshold(
         # We typically ignore the edge cases where precision or recall is 0 unless it's the only option
         valid_idx = np.where((precision + recall) > 0)[0]
         if len(valid_idx) == 0:
-             logging.warning("Could not find any threshold with non-zero precision/recall. Returning 0.5.")
+             logger.warning("Could not find any threshold with non-zero precision/recall. Returning 0.5.")
              return 0.5
 
         best_idx = valid_idx[np.argmax(f1_scores[valid_idx])]
         optimal_threshold = thresholds[best_idx]
-        logging.info(f"Optimal F1 threshold found: {optimal_threshold:.4f} (F1: {f1_scores[best_idx]:.4f})")
+        logger.info(f"Optimal F1 threshold found: {optimal_threshold:.4f} (F1: {f1_scores[best_idx]:.4f})")
 
     # Add other metrics like G-mean if needed
     # elif metric == 'gmean':
@@ -943,10 +943,10 @@ def find_optimal_threshold(
     #     gmeans = np.sqrt(tpr * (1-fpr))
     #     best_idx = np.argmax(gmeans)
     #     optimal_threshold = thresholds[best_idx]
-    #     logging.info(f"Optimal G-mean threshold found: {optimal_threshold:.4f} (G-mean: {gmeans[best_idx]:.4f})")
+    #     logger.info(f"Optimal G-mean threshold found: {optimal_threshold:.4f} (G-mean: {gmeans[best_idx]:.4f})")
 
     else:
-        logging.warning(f"Unsupported metric '{metric}' for threshold optimization. Defaulting to 0.5.")
+        logger.warning(f"Unsupported metric '{metric}' for threshold optimization. Defaulting to 0.5.")
         optimal_threshold = 0.5
 
     # Ensure threshold is within a reasonable range (e.g., handle edge cases from precision_recall_curve)
