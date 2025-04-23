@@ -35,15 +35,15 @@ clean_df, new_features, good_quality_sids = data_preparation(
 
 logging.info("Splitting data into train, validation, and test sets")
 SW_df, final_features = split_data(clean_df, good_quality_sids, new_features)
-print(SW_df.shape)
-print(SW_df.Sleep_Stage.value_counts())
+logging.info(SW_df.shape)
+logging.info(SW_df.Sleep_Stage.value_counts())
 
 # Initialize KFold
 kf = KFold(n_splits=5, shuffle=True, random_state=0)
 
 group_variables = ["AHI_Severity", "Obesity"]
-group_variable = get_variable(group_variables, idx=0)
-print(len(final_features))
+group_variable = get_variable(group_variables, idx=2)
+logging.info(len(final_features))
 result_dfs = []
 
 steps = [
@@ -51,13 +51,14 @@ steps = [
     'LightGBM_LSTM_CrossEntropy',
     'LightGBM_LSTM_Focal',
     'LightGBM_Transformer',
-    'LightGBM_TST',
     'GPBoost',
     'GPBoost_LSTM_CrossEntropy',
     'GPBoost_LSTM_Focal',
     'GPBoost_Transformer',
-    'GPBoost_TST', 
 ]
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 logging.info("Performing k-fold cross-validation splitting")
 for fold, (trainval_idx, test_idx) in enumerate(kf.split(good_quality_sids)):
@@ -68,7 +69,7 @@ for fold, (trainval_idx, test_idx) in enumerate(kf.split(good_quality_sids)):
     val_sids = [good_quality_sids[idx] for idx in trainval_idx[54:]]
     test_sids = [good_quality_sids[idx] for idx in test_idx]
 
-    print(f"Fold {fold + 1}")
+    logging.info(f"Fold {fold + 1}")
 
     X_train, y_train, group_train = train_test_split(SW_df, train_sids, final_features, group_variable)
     X_val, y_val, group_val = train_test_split(SW_df, val_sids, final_features, group_variable)
@@ -114,39 +115,92 @@ for fold, (trainval_idx, test_idx) in enumerate(kf.split(good_quality_sids)):
 
         if 'LightGBM_LSTM_CrossEntropy' in steps or 'LightGBM_LSTM_Focal' in steps:
             logging.info("Creating LSTM dataset for LightGBM")
+                    
             dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
+            dataloader_val = LSTM_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1)
             dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
             if 'LightGBM_LSTM_CrossEntropy' in steps:
 
                 logging.info("Running LSTM model for LightGBM_CrossEntropy")
-                LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
+                LSTM_model = LSTM_engine(
+                    dataloader_train,
+                    num_epoch=300,
+                    hidden_layer_size=32,
+                    learning_rate=0.001,
+                    loss='cross_entropy'
+                )
+
+                logging.info("Finding optimal threshold for LightGBM_LSTM_CrossEntropy")
+                optimal_threshold_ce = find_optimal_threshold(LSTM_model, dataloader_val, device, metric='f1')
 
                 logging.info("Evaluating LSTM model for LightGBM_CrossEntropy")
-                lgb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_CrossEntropy')
+                lgb_lstm_cross_entropy_test_results_df = LSTM_eval(
+                    LSTM_model,
+                    dataloader_test,
+                    true_ls_test,
+                    'LightGBM_LSTM_CrossEntropy',
+                    optimal_threshold=optimal_threshold_ce 
+                )
 
             if 'LightGBM_LSTM_Focal' in steps:
 
-                logging.info("Running LSTM model for LightGBM_Focal")
-                LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
+                class_ratios = calculate_class_ratios(true_ls_train)
 
-                logging.info("Evaluating LSTM model for LightGBM_Focal")
-                lgb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'LightGBM_LSTM_Focal')
+                logging.info("Running LSTM model for LightGBM_Focal")
+                LSTM_model = LSTM_engine(
+                    dataloader_train, 
+                    num_epoch=300, 
+                    hidden_layer_size=32, 
+                    learning_rate=0.0005,
+                    loss='focal',
+                    class_ratios=class_ratios
+                )
+
+                logging.info("Finding optimal threshold for LightGBM_LSTM_Focal")
+                optimal_threshold_focal = find_optimal_threshold(LSTM_model, dataloader_val, device, metric='f1')
+
+                logging.info("Evaluating LSTM model for LightGBM_Focal on test set")
+                lgb_lstm_focal_test_results_df = LSTM_eval(
+                    LSTM_model,
+                    dataloader_test,
+                    true_ls_test,
+                    'LightGBM_LSTM_Focal',
+                    optimal_threshold=optimal_threshold_focal # Pass the found threshold
+                )
 
         if 'LightGBM_Transformer' in steps:
             logging.info("Creating Transformer dataset for LightGBM")
+            # Ensure dataloaders use shuffle=False for val/test
             dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+            dataloader_val = Transformer_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1) # Added val dataloader
             dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
             logging.info("Running Transformer model for LightGBM post-processing")
-            transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
-            lgb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'LightGBM_Transformer')
+            class_ratios = calculate_class_ratios(true_ls_train) # Calculate class ratios if needed
+            transformer_model = Transformer_engine(
+                dataloader_train,
+                d_model=256, nhead=8, num_layers=4, num_epoch=150,
+                class_ratios=class_ratios # Assuming Transformer_engine uses FocalLoss
+            )
 
-        if 'LightGBM_TST' in steps:
-            logging.info("Running TST model for LightGBM post-processing")
-            tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
+            logging.info("Finding optimal threshold for LightGBM_Transformer")
+            # *** Use the correct model (transformer_model) and dataloader (dataloader_val) ***
+            optimal_threshold_transformer = find_optimal_threshold(
+                transformer_model, # Use the trained transformer model
+                dataloader_val,    # Use the validation dataloader
+                device,
+                metric='f1'
+            )
 
-            lgb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'LightGBM_TST')
+            logging.info("Evaluating Transformer model for LightGBM post-processing")
+            lgb_transformer_test_results_df = Transformer_eval(
+                transformer_model,
+                dataloader_test,
+                true_ls_test,
+                'LightGBM_Transformer',
+                optimal_threshold=optimal_threshold_transformer # Pass the found threshold
+            )
 
     if 'GPBoost' in steps:
         logging.info("Running GPBoost model")
@@ -170,49 +224,100 @@ for fold, (trainval_idx, test_idx) in enumerate(kf.split(good_quality_sids)):
 
         if 'GPBoost_LSTM_CrossEntropy' in steps or 'GPBoost_LSTM_Focal' in steps:
 
-            logging.info("Creating LSTM dataset for GPBoost_CrossEntropy")
+            logging.info("Creating LSTM dataset for GPBoost_LSTM_CrossEntropy and GPBoost_LSTM_Focal")
             dataloader_train = LSTM_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=32)
+            dataloader_val = LSTM_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1)
             dataloader_test = LSTM_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
             if 'GPBoost_LSTM_CrossEntropy' in steps:
 
-                logging.info("Running LSTM model for GPBoost_CrossEntropy")
-                LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001)
-                gpb_lstm_cross_entropy_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_CrossEntropy')
+                logging.info("Running LSTM model for GPBoost_LSTM_CrossEntropy")
+                LSTM_model = LSTM_engine(
+                    dataloader_train, 
+                    num_epoch=300, 
+                    hidden_layer_size=32, 
+                    learning_rate=0.001,
+                    loss='cross_entropy'
+                )
+
+                logging.info("Finding optimal threshold for GPBoost_LSTM_CrossEntropy")
+                optimal_threshold_ce = find_optimal_threshold(LSTM_model, dataloader_val, device, metric='f1')
+
+                gpb_lstm_cross_entropy_test_results_df = LSTM_eval(
+                    LSTM_model, 
+                    dataloader_test, 
+                    true_ls_test, 
+                    'GPBoost_LSTM_CrossEntropy',
+                    optimal_threshold=optimal_threshold_ce
+                )
 
             if 'GPBoost_LSTM_Focal' in steps:
 
-                logging.info("Running LSTM model for GPBoost_Focal")
-                LSTM_model = LSTM_engine(dataloader_train, num_epoch=300, hidden_layer_size=32, learning_rate=0.001, loss='focal')
-                gpb_lstm_focal_test_results_df = LSTM_eval(LSTM_model, dataloader_test, true_ls_test, 'GPBoost_LSTM_Focal')
+                class_ratios = calculate_class_ratios(true_ls_train)
+                logging.info("Running LSTM model for GPBoost_LSTM_Focal")
+                LSTM_model = LSTM_engine(
+                    dataloader_train, 
+                    num_epoch=300, 
+                    hidden_layer_size=32, 
+                    learning_rate=0.0005, 
+                    loss='focal',
+                    class_ratios=class_ratios
+                )
+
+                logging.info("Finding optimal threshold for GPBoost_LSTM_Focal")
+                optimal_threshold_focal = find_optimal_threshold(LSTM_model, dataloader_val, device, metric='f1')
+                gpb_lstm_focal_test_results_df = LSTM_eval(
+                    LSTM_model, 
+                    dataloader_test, 
+                    true_ls_test, 
+                    'GPBoost_LSTM_Focal',
+                    optimal_threshold=optimal_threshold_focal
+                )
 
         if 'GPBoost_Transformer' in steps:
             logging.info("Creating Transformer dataset for GPBoost post-processing")
+            # Ensure dataloaders use shuffle=False for val/test
             dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
+            dataloader_val = Transformer_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1)
             dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
             logging.info("Running Transformer model for GPBoost post-processing")
-            transformer_model = Transformer_engine(dataloader_train, d_model=256, nhead=8, num_layers=4, num_epoch=150)
-            gpb_transformer_test_results_df = Transformer_eval(transformer_model, dataloader_test, true_ls_test, 'GPBoost_Transformer')
+            class_ratios = calculate_class_ratios(true_ls_train)
+            # Pass class_ratios if Transformer_engine uses them (e.g., for FocalLoss)
+            transformer_model = Transformer_engine(
+                dataloader_train,
+                d_model=256, nhead=8, num_layers=4, num_epoch=150,
+                class_ratios=class_ratios # Assuming Transformer_engine uses FocalLoss
+            )
 
-        if 'GPBoost_TST' in steps:
-            logging.info("Running TST model for GPBoost post-processing")
-            tst_learner = TST_learner(prob_ls_train, len_train, true_ls_train, prob_ls_val, len_val, true_ls_val)
+            logging.info("Finding optimal threshold for GPBoost_Transformer")
+            # *** Use the correct model (transformer_model) and dataloader (dataloader_val) ***
+            optimal_threshold_transformer = find_optimal_threshold(
+                transformer_model, # Use the trained transformer model
+                dataloader_val,    # Use the validation dataloader
+                device,
+                metric='f1'
+            )
 
-            gpb_tst_test_results_df = TST_eval(tst_learner, prob_ls_test, len_test, true_ls_test, 'GPBoost_TST')
+            logging.info("Evaluating Transformer model for GPBoost post-processing")
+            gpb_transformer_test_results_df = Transformer_eval(
+                transformer_model,
+                dataloader_test,
+                true_ls_test,
+                'GPBoost_Transformer',
+                optimal_threshold=optimal_threshold_transformer # Pass the found threshold
+            )
 
-    # overall result
-    overall_result = pd.concat([
-        lgb_test_results_df, 
-        lgb_lstm_cross_entropy_test_results_df,
-        lgb_lstm_focal_test_results_df,
-        lgb_transformer_test_results_df,
-        lgb_tst_test_results_df,
-        gpb_test_results_df,
-        gpb_lstm_cross_entropy_test_results_df,
-        gpb_lstm_focal_test_results_df,
-        gpb_transformer_test_results_df,
-        gpb_tst_test_results_df
-    ])
-    result_dfs.append(overall_result)
-    overall_result.to_csv(f'./results/fold_{fold + 1}_results_{"__".join(group_variable)}.csv', index=False)
+        # overall result
+        overall_result = pd.concat([
+            lgb_test_results_df, 
+            lgb_lstm_cross_entropy_test_results_df,
+            lgb_lstm_focal_test_results_df,
+            lgb_transformer_test_results_df,
+            gpb_test_results_df,
+            gpb_lstm_cross_entropy_test_results_df,
+            gpb_lstm_focal_test_results_df,
+            gpb_transformer_test_results_df,
+        ])
+        result_dfs.append(overall_result)
+        overall_result.to_csv(f'./results/fold_{fold + 1}_results_{"__".join(group_variable)}.csv', index=False)
