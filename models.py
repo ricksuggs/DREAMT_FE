@@ -24,7 +24,7 @@ import lightgbm as lgb
 import gpboost as gpb
 from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
 from torch.utils.data import DataLoader
-from tqdm import tqdm  # Add this import
+from tqdm import tqdm
 from utils import *
 import math
 import warnings
@@ -34,7 +34,6 @@ from fastai.callback.tracker import EarlyStoppingCallback
 from fastai.metrics import accuracy
 from typing import Dict, List, Optional, Union
 
-# Configure logger
 logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
@@ -77,7 +76,7 @@ class LSTMPModel(nn.Module):
         )
         self.linear = nn.Linear(
             hidden_layer_size, output_size
-        )  # 2 output units for 2 classes
+        )
 
     def forward(self, input_seq, lengths):
         packed_input = pack_padded_sequence(
@@ -113,14 +112,14 @@ class SleepTransformer(nn.Module):
             d_model=d_model,
             nhead=nhead,
             dropout=dropout,
-            batch_first=True # Expect (batch, seq, feature)
+            batch_first=True
         )
         self.transformer = nn.TransformerEncoder(
             encoder_layer,
             num_layers=num_layers
         )
 
-        self.fc = nn.Linear(d_model, 2) # Output layer for binary classification
+        self.fc = nn.Linear(d_model, 2)
         self._init_parameters()
 
     def _init_parameters(self):
@@ -143,8 +142,7 @@ class SleepTransformer(nn.Module):
             torch.Tensor: Boolean mask of shape (batch_size, max_seq_len) where True indicates a padded position.
         """
         batch_size = lengths.size(0)
-        max_len = lengths.max().item() # Determine max length in the current batch
-        # Ensure lengths is on the correct device before comparison
+        max_len = lengths.max().item()
         mask = torch.arange(max_len, device=device).expand(batch_size, max_len) >= lengths.unsqueeze(1)
         return mask
 
@@ -162,7 +160,6 @@ class SleepTransformer(nn.Module):
         Returns:
             torch.Tensor: Output tensor of shape [batch_size, seq_len, 2].
         """
-        # Determine target device from input tensor x
         target_device = x.device
         # Move lengths tensor to the target device
         lengths_on_device = lengths.to(target_device)
@@ -585,11 +582,7 @@ def LSTM_engine(
         loss_function = nn.CrossEntropyLoss()
     elif loss == 'focal':
         # Initialize focal loss
-        loss_function = FocalLoss(
-            class_ratios=class_ratios,
-            gamma=2.0,
-            label_smoothing=0.0
-        ).to(device)
+        loss_function = FocalLoss(class_ratios=class_ratios, gamma=2.0, label_smoothing=0.0).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     # Training loop
@@ -640,7 +633,7 @@ def LSTM_eval(
     dataloader_test: DataLoader,
     list_true_stages_test: List[np.ndarray],
     test_name: str,
-    optimal_threshold: float # Removed default, should always be provided now
+    optimal_threshold: float = None
 ) -> pd.DataFrame:
     """
     Evaluate an LSTM model using a DataLoader, applying an optimal threshold.
@@ -658,22 +651,31 @@ def LSTM_eval(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lstm_model.eval()
     lstm_model.to(device)
-    logger.info(f"Evaluating {test_name} using threshold: {optimal_threshold:.4f}")
+    logger.info(f"Evaluating {test_name} using threshold: {optimal_threshold}")
 
     predicted_probabilities_list: List[np.ndarray] = []
     valid_true_labels_list: List[np.ndarray] = []
     seq_idx = 0
+    kappa = []
 
     with torch.no_grad():
         for batch in dataloader_test:
             sample = batch["sample"].to(device, non_blocking=True)
             length = batch["length"] # Stays on CPU
+            label = batch["label"].to(device)
 
             try:
                 outputs = lstm_model(sample, length) # Shape: (batch_size, seq_len, num_classes)
             except Exception as e:
                 logger.error(f"Error during LSTM inference in eval: {e}", exc_info=True)
                 continue # Skip batch on error
+
+            # Calculating Cohen's Kappa Score, ensure labels and predictions are on CPU
+            kappa.append(
+                cohen_kappa_score(
+                    label.cpu().numpy()[0], np.argmax(outputs.cpu().numpy()[0], axis=1)
+                )
+            )
 
             batch_size = outputs.size(0)
             for b in range(batch_size):
@@ -705,23 +707,25 @@ def LSTM_eval(
         logger.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
         return pd.DataFrame(columns=['Model', 'Precision', 'Recall', 'F1 Score', 'Specificity', 'AUROC', 'AUPRC', 'Accuracy', "Cohen's Kappa"])
 
-    # Concatenate all probabilities and true labels
     all_probabilities: np.ndarray = np.concatenate(predicted_probabilities_list)
     all_true_labels: np.ndarray = np.concatenate(valid_true_labels_list)
 
-    # *** Use the new unified metric calculation function ***
-    results_df = calculate_metrics_with_optimal_threshold(
-        all_true_labels,
-        all_probabilities,
-        test_name,
-        optimal_threshold
-    )
+    if optimal_threshold is None:
+        results_df = calculate_metrics(all_true_labels, all_probabilities, test_name)
+        results_df["Cohen's Kappa"] = np.average(kappa)
+    else:
+        results_df = calculate_metrics_with_optimal_threshold(
+            all_true_labels,
+            all_probabilities,
+            test_name,
+            optimal_threshold
+        )
 
     # Plot confusion matrix using the thresholded predictions
     # We need the predicted labels for the confusion matrix
-    positive_probs = all_probabilities[:, 1]
-    predicted_labels = (positive_probs >= optimal_threshold).astype(int)
-    plot_cm(predicted_labels, all_true_labels, test_name)
+    # positive_probs = all_probabilities[:, 1]
+    # predicted_labels = (positive_probs >= optimal_threshold).astype(int)
+    # plot_cm(predicted_labels, all_true_labels, test_name)
 
     return results_df
 
@@ -757,15 +761,6 @@ class FocalLoss(nn.Module):
                 or values are not floats (Python or NumPy).
         """
         super().__init__()
-        if not isinstance(class_ratios, dict):
-            raise TypeError("class_ratios must be a dictionary")
-
-        # Allow both standard int/float and numpy int/float types
-        if not all(isinstance(k, (int, np.integer)) and isinstance(v, (float, np.floating))
-                   for k, v in class_ratios.items()):
-            raise ValueError(
-                "class_ratios keys must be int or np.integer, and values must be float or np.floating"
-            )
 
         self.class_ratios = class_ratios
         self.gamma = gamma
@@ -853,7 +848,6 @@ def Transformer_engine(
     logger.info(f"Training on {device}")
 
     try:
-        # Initialize model
         input_size = 4
         model = SleepTransformer(
             input_size=input_size,
@@ -1040,11 +1034,9 @@ def Transformer_eval(
                 # Use the minimum of the reported length and the actual label length
                 effective_seq_len: int = min(reported_len, actual_label_len)
 
-                # Log a warning if there's a mismatch
                 if reported_len != actual_label_len:
                     logger.warning(f"Length mismatch for seq_idx {seq_idx}: Reported length ({reported_len}) != Actual label length ({actual_label_len}). Using effective length: {effective_seq_len}.")
 
-                # Skip if effective length is zero
                 if effective_seq_len == 0:
                     logger.warning(f"Skipping seq_idx {seq_idx} due to zero effective length.")
                     seq_idx += 1
@@ -1100,17 +1092,15 @@ def Transformer_eval(
                 predicted_probabilities_list.append(probs)
                 valid_true_labels_list.append(true_labels_valid)
 
-                seq_idx += 1 # Increment sequence index
+                seq_idx += 1
 
     if not valid_true_labels_list:
         logger.error(f"No valid sequences found during evaluation for {test_name}. Cannot calculate metrics.")
         return pd.DataFrame(columns=['Model', 'Precision', 'Recall', 'F1 Score', 'Specificity', 'AUROC', 'AUPRC', 'Accuracy', "Cohen's Kappa"])
 
-    # Concatenate all probabilities and true labels
     all_probabilities: np.ndarray = np.concatenate(predicted_probabilities_list)
     all_true_labels: np.ndarray = np.concatenate(valid_true_labels_list)
 
-    # Use the unified metric calculation function
     results_df = calculate_metrics_with_optimal_threshold(
         all_true_labels,
         all_probabilities,
@@ -1118,7 +1108,6 @@ def Transformer_eval(
         optimal_threshold
     )
 
-    # Plot confusion matrix using the thresholded predictions
     positive_probs = all_probabilities[:, 1]
     predicted_labels = (positive_probs >= optimal_threshold).astype(int)
     plot_cm(predicted_labels, all_true_labels, test_name)
