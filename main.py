@@ -38,10 +38,12 @@ steps = [
 
 lgb_test_results_df = None
 lgb_lstm_cross_entropy_test_results_df = None
+lgb_lstm_cross_entropy_opt_test_results_df = None
 lgb_lstm_focal_test_results_df = None
 lgb_transformer_test_results_df = None
 gpb_test_results_df = None
 gpb_lstm_cross_entropy_test_results_df = None
+gpb_lstm_cross_entropy_opt_test_results_df = None
 gpb_lstm_focal_test_results_df = None
 gpb_transformer_test_results_df = None
 
@@ -126,12 +128,20 @@ if 'LightGBM' in steps:
             logging.info("Finding optimal threshold for LightGBM_LSTM_CrossEntropy")
             optimal_threshold_ce = find_optimal_threshold(LSTM_model, dataloader_val, device, metric='f1')
 
-            logging.info("Evaluating LSTM model for LightGBM_CrossEntropy")
+            logging.info("Evaluating LSTM model for LightGBM_CrossEntropy without optimal threshold")
             lgb_lstm_cross_entropy_test_results_df = LSTM_eval(
                 LSTM_model,
                 dataloader_test,
                 true_ls_test,
-                'LightGBM_LSTM_CrossEntropy',
+                'LightGBM_LSTM_CrossEntropy'
+            )
+
+            logging.info("Evaluating LSTM model for LightGBM_CrossEntropy with optimal threshold")
+            lgb_lstm_cross_entropy_opt_test_results_df = LSTM_eval(
+                LSTM_model,
+                dataloader_test,
+                true_ls_test,
+                'LightGBM_LSTM_CrossEntropy_Opt',
                 optimal_threshold=optimal_threshold_ce 
             )
 
@@ -158,29 +168,27 @@ if 'LightGBM' in steps:
                 dataloader_test,
                 true_ls_test,
                 'LightGBM_LSTM_Focal',
-                optimal_threshold=optimal_threshold_focal # Pass the found threshold
+                optimal_threshold=optimal_threshold_focal
             )
 
     if 'LightGBM_Transformer' in steps:
         logging.info("Creating Transformer dataset for LightGBM")
-        # Ensure dataloaders use shuffle=False for val/test
         dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
-        dataloader_val = Transformer_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1) # Added val dataloader
+        dataloader_val = Transformer_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1)
         dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
         logging.info("Running Transformer model for LightGBM post-processing")
-        class_ratios = calculate_class_ratios(true_ls_train) # Calculate class ratios if needed
+        class_ratios = calculate_class_ratios(true_ls_train)
         transformer_model = Transformer_engine(
             dataloader_train,
             d_model=256, nhead=8, num_layers=4, num_epoch=150,
-            class_ratios=class_ratios # Assuming Transformer_engine uses FocalLoss
+            class_ratios=class_ratios
         )
 
         logging.info("Finding optimal threshold for LightGBM_Transformer")
-        # *** Use the correct model (transformer_model) and dataloader (dataloader_val) ***
         optimal_threshold_transformer = find_optimal_threshold(
-            transformer_model, # Use the trained transformer model
-            dataloader_val,    # Use the validation dataloader
+            transformer_model,
+            dataloader_val,
             device,
             metric='f1'
         )
@@ -191,7 +199,7 @@ if 'LightGBM' in steps:
             dataloader_test,
             true_ls_test,
             'LightGBM_Transformer',
-            optimal_threshold=optimal_threshold_transformer # Pass the found threshold
+            optimal_threshold=optimal_threshold_transformer
         )
 
 if 'GPBoost' in steps:
@@ -232,14 +240,21 @@ if 'GPBoost' in steps:
                 loss='cross_entropy'
             )
 
-            logging.info("Finding optimal threshold for GPBoost_LSTM_CrossEntropy")
-            optimal_threshold_ce = find_optimal_threshold(LSTM_model, dataloader_val, device, metric='f1')
-
             gpb_lstm_cross_entropy_test_results_df = LSTM_eval(
                 LSTM_model, 
                 dataloader_test, 
                 true_ls_test, 
-                'GPBoost_LSTM_CrossEntropy',
+                'GPBoost_LSTM_CrossEntropy'
+            )
+
+            logging.info("Finding optimal threshold for GPBoost_LSTM_CrossEntropy")
+            optimal_threshold_ce = find_optimal_threshold(LSTM_model, dataloader_val, device, metric='f1')
+
+            gpb_lstm_cross_entropy_opt_test_results_df = LSTM_eval(
+                LSTM_model, 
+                dataloader_test, 
+                true_ls_test, 
+                'GPBoost_LSTM_CrossEntropy_Opt',
                 optimal_threshold=optimal_threshold_ce
             )
 
@@ -268,25 +283,22 @@ if 'GPBoost' in steps:
 
     if 'GPBoost_Transformer' in steps:
         logging.info("Creating Transformer dataset for GPBoost post-processing")
-        # Ensure dataloaders use shuffle=False for val/test
         dataloader_train = Transformer_dataloader(prob_ls_train, len_train, true_ls_train, batch_size=16)
         dataloader_val = Transformer_dataloader(prob_ls_val, len_val, true_ls_val, batch_size=1)
         dataloader_test = Transformer_dataloader(prob_ls_test, len_test, true_ls_test, batch_size=1)
 
         logging.info("Running Transformer model for GPBoost post-processing")
         class_ratios = calculate_class_ratios(true_ls_train)
-        # Pass class_ratios if Transformer_engine uses them (e.g., for FocalLoss)
         transformer_model = Transformer_engine(
             dataloader_train,
             d_model=256, nhead=8, num_layers=4, num_epoch=150,
-            class_ratios=class_ratios # Assuming Transformer_engine uses FocalLoss
+            class_ratios=class_ratios
         )
 
         logging.info("Finding optimal threshold for GPBoost_Transformer")
-        # *** Use the correct model (transformer_model) and dataloader (dataloader_val) ***
         optimal_threshold_transformer = find_optimal_threshold(
-            transformer_model, # Use the trained transformer model
-            dataloader_val,    # Use the validation dataloader
+            transformer_model,
+            dataloader_val,
             device,
             metric='f1'
         )
@@ -297,17 +309,19 @@ if 'GPBoost' in steps:
             dataloader_test,
             true_ls_test,
             'GPBoost_Transformer',
-            optimal_threshold=optimal_threshold_transformer # Pass the found threshold
+            optimal_threshold=optimal_threshold_transformer
         )
 
 # overall result
 overall_result = pd.concat([
     lgb_test_results_df, 
     lgb_lstm_cross_entropy_test_results_df,
+    lgb_lstm_cross_entropy_opt_test_results_df,
     lgb_lstm_focal_test_results_df,
     lgb_transformer_test_results_df,
     gpb_test_results_df,
     gpb_lstm_cross_entropy_test_results_df,
+    gpb_lstm_cross_entropy_opt_test_results_df,
     gpb_lstm_focal_test_results_df,
     gpb_transformer_test_results_df,
 ])
