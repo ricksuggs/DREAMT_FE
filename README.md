@@ -13,6 +13,43 @@ The motivation for this repository is a replication of the paper's results, and 
 1. Replace LSTM post-processing with Transformer post-processing
 2. Use focal loss in place of cross-entropy loss in LSTM post-processing
 
+## Setup
+
+1. Clone this repository.
+2. Create a python virtual environment with python 3.10
+```sh
+    python -m venv .venv
+```
+3. Install the dependencies
+```sh
+    pip install -r requirements.txt
+```
+
+## Execution
+
+1. Download the dataset from https://physionet.org/content/dreamt/2.0.0/
+2. Update `data_folder` in `feature_engineering.py:1387` to `data_64hz` folder in download
+3. Run feature engineering script
+```sh
+    # Expected execution time: ~ 13 hours
+    python feature_engineering.py
+``` 
+4. Feature dataframes will be regenerated in `dataset_sample/features_df`
+5. Run the calculate quality scores script
+```sh
+    python calculate_quality_score.py
+```
+6. Run the training and evaulation pipeline without 5-fold cross validation
+```sh
+    # Expected execution time: ~ 1 hour
+    python main.py
+```
+7. Run the training and evaluation pipeline with 5-fold cross-validation
+```sh
+    # Expected execution time: ~ 5 hours
+    python main_cv.py
+```
+
 ## Directory Structure
 
 The main components of the project pipeline includes: 
@@ -37,44 +74,6 @@ The main components of the project pipeline includes:
 ├── main.py
 └── utils.py
 
-```
-
-## Setup
-
-1. Clone this repository.
-2. Create a python virtual environment with python 3.10
-```sh
-    python -m venv .venv
-```
-3. Install the dependencies
-```sh
-    pip install -r requirements.txt
-```
-
-## Execution
-
-### Run the data preparation pipeline and extract features
-1. Download the dataset from https://physionet.org/content/dreamt/2.0.0/
-2. Update `data_folder` in `feature_engineering.py:1387` to `data_64hz` folder in download
-3. Run feature engineering script
-```sh
-    # Expected execution time: ~ 13 hours
-    python feature_engineering.py
-``` 
-4. Feature dataframes will be regenerated in `dataset_sample/features_df`
-5. Run the calculate quality scores script
-```sh
-    python calculate_quality_score.py
-```
-6. Run the training and evaulation pipeline without 5-fold cross validation
-```sh
-    # Expected execution time: ~ 1 hour
-    python main.py
-```
-7. Run the training and pipeline with 5-fold cross-validation
-```sh
-    # Expected execution time: ~ 5 hours
-    python main_cv.py
 ```
 
 ## Description
