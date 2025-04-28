@@ -30,22 +30,22 @@ The motivation for this repository is a replication of the paper's results, and 
 1. Download the dataset from https://physionet.org/content/dreamt/2.0.0/
 2. Update `data_folder` in `feature_engineering.py:1387` to `data_64hz` folder in download
 3. Run feature engineering script
-```sh
+```bash
     # Expected execution time: ~ 13 hours
     python feature_engineering.py
 ``` 
 4. Feature dataframes will be regenerated in `dataset_sample/features_df`
 5. Run the calculate quality scores script
-```sh
+```bash
     python calculate_quality_score.py
 ```
 6. Run the training and evaulation pipeline without 5-fold cross validation
-```sh
+```bash
     # Expected execution time: ~ 1 hour
     python main.py
 ```
 7. Run the training and evaluation pipeline with 5-fold cross-validation
-```sh
+```bash
     # Expected execution time: ~ 5 hours
     python main_cv.py
 ```
