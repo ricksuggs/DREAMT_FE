@@ -1,4 +1,5 @@
 # load packages
+import logging
 import pandas as pd
 import numpy as np
 
@@ -14,6 +15,8 @@ from torch.utils.data import DataLoader
 from utils import *
 
 import warnings
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -376,14 +379,18 @@ def resample_data(X_train, y_train, group_train, group_variable):
     group_train_resampled : numpy array
         The group variable(s) after SMOTE resampling.
     """
+    logging.info("Starting SMOTE resampling")
+
     smote = SMOTE(random_state=1)
     combined = np.column_stack((X_train, group_train))
     combined_resampled, y_train_resampled = smote.fit_resample(combined, y_train)
 
+    logging.info("Separating features and group variables after resampling")
     # Separate the features and the group variable after resampling
     X_train_resampled = combined_resampled[
         :, : -len(group_variable)
     ]  # All columns except the last one/two, depends on group variable
     group_train_resampled = combined_resampled[:, -len(group_variable) :]
 
+    logging.info("Completed SMOTE resampling")
     return X_train_resampled, y_train_resampled, group_train_resampled

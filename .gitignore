@@ -1,0 +1,6 @@
+__pycache__/
+fe_dataframes_whole_study/
+results/run*/
+results/fold_*_results_*
+.venv/
+.context/

@@ -15,7 +15,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
+import logging
 
+logger = logging.getLogger(__name__)
 
 def missingness_imputation(data):
     """Perform missingness imputation on the given data.
@@ -509,6 +511,116 @@ def calculate_metrics(y_test, y_pred_proba, model_name):
 
     return result_df
 
+def calculate_metrics_with_optimal_threshold(
+    y_true: np.ndarray,
+    y_pred_proba: np.ndarray,
+    model_name: str,
+    optimal_threshold: float
+) -> pd.DataFrame:
+    """
+    Calculates classification metrics using an optimal threshold.
+
+    Args:
+        y_true (np.ndarray): True labels (N,).
+        y_pred_proba (np.ndarray): Predicted probabilities for each class (N, C).
+                                   Assumes binary classification (C=2) and index 1
+                                   is the positive class.
+        model_name (str): Name of the model for the results DataFrame.
+        optimal_threshold (float): The probability threshold to use for
+                                   classifying the positive class.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the calculated metrics.
+    """
+    # Input validation
+    if not isinstance(y_true, np.ndarray):
+        y_true = np.asarray(y_true)
+    if not isinstance(y_pred_proba, np.ndarray):
+        y_pred_proba = np.asarray(y_pred_proba)
+    if y_pred_proba.ndim != 2 or y_pred_proba.shape[1] != 2:
+        logger.error(f"y_pred_proba for {model_name} has unexpected shape: {y_pred_proba.shape}. Expected (N, 2).")
+        # Return empty or default DataFrame
+        return pd.DataFrame([{
+            "Model": model_name, "Precision": 0.0, "Recall": 0.0, "F1 Score": 0.0,
+            "Specificity": 0.0, "AUROC": 0.0, 'AUPRC': 0.0, "Accuracy": 0.0
+        }])
+    if y_true.shape[0] != y_pred_proba.shape[0]:
+         logger.error(f"Shape mismatch for {model_name}: y_true {y_true.shape} vs y_pred_proba {y_pred_proba.shape}")
+         return pd.DataFrame([{
+            "Model": model_name, "Precision": 0.0, "Recall": 0.0, "F1 Score": 0.0,
+            "Specificity": 0.0, "AUROC": 0.0, 'AUPRC': 0.0, "Accuracy": 0.0
+        }])
+
+
+    # Get probabilities for the positive class (index 1)
+    positive_probs: np.ndarray = y_pred_proba[:, 1]
+
+    # Apply the optimal threshold
+    predicted_labels: np.ndarray = (positive_probs >= optimal_threshold).astype(int)
+
+    # Calculate threshold-dependent metrics
+    try:
+        accuracy: float = accuracy_score(y_true, predicted_labels)
+        precision: float = precision_score(y_true, predicted_labels, zero_division=0)
+        recall: float = recall_score(y_true, predicted_labels, zero_division=0) # Sensitivity
+        f1: float = f1_score(y_true, predicted_labels, zero_division=0)
+        kappa: float = cohen_kappa_score(y_true, predicted_labels) # Calculate overall Kappa
+
+        # Calculate specificity (True Negative Rate)
+        cm = confusion_matrix(y_true, predicted_labels)
+        if cm.shape == (2, 2):
+            tn, fp, fn, tp = cm.ravel()
+            specificity: float = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        else: # Handle cases where only one class is predicted or labels are single class
+            unique_labels_true = np.unique(y_true)
+            unique_labels_pred = np.unique(predicted_labels)
+            if len(unique_labels_pred) == 1:
+                if unique_labels_pred[0] == 0: # Only predicted negative
+                    specificity = 1.0 if 0 in unique_labels_true else 0.0 # Check if true negatives exist
+                else: # Only predicted positive
+                    specificity = 0.0
+            elif len(unique_labels_true) == 1: # Only one true class
+                 specificity = 1.0 if unique_labels_true[0] == 0 else 0.0 # Specificity is 1 if only true negatives exist
+            else: # Should not happen with binary labels, but default to 0
+                specificity = 0.0
+                logger.warning(f"Unexpected confusion matrix shape: {cm.shape} for model {model_name}. Specificity set to 0.")
+
+    except Exception as e:
+        logger.error(f"Error calculating threshold-dependent metrics for {model_name}: {e}", exc_info=True)
+        accuracy, precision, recall, f1, specificity, kappa = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+
+    # Calculate threshold-independent metrics (using probabilities)
+    try:
+        auroc: float = roc_auc_score(y_true, positive_probs)
+        precisions_pr, recalls_pr, _ = precision_recall_curve(y_true, positive_probs)
+        # Ensure recalls_pr and precisions_pr are sorted correctly for AUC calculation
+        # The curve function usually returns them sorted by threshold, which might not be monotonic in recall
+        # Sort by recall for AUC calculation
+        sort_indices = np.argsort(recalls_pr)
+        auprc: float = auc(recalls_pr[sort_indices], precisions_pr[sort_indices])
+    except ValueError as e:
+         logger.warning(f"Could not calculate AUROC/AUPRC for {model_name} (possibly only one class present): {e}")
+         auroc, auprc = 0.0, 0.0 # Assign default value if calculation fails (e.g., only one class in y_true)
+    except Exception as e:
+        logger.error(f"Error calculating threshold-independent metrics for {model_name}: {e}", exc_info=True)
+        auroc, auprc = 0.0, 0.0
+
+    results = {
+        "Model": model_name,
+        "Precision": precision,
+        "Recall": recall,
+        "F1 Score": f1,
+        "Specificity": specificity,
+        "AUROC": auroc,
+        'AUPRC': auprc,
+        "Accuracy": accuracy,
+        "Cohen's Kappa": kappa # Include overall Kappa here
+    }
+
+    result_df = pd.DataFrame([results]) # Create DataFrame from single dict
+
+    return result_df
+
 
 def calculate_kappa(list_probabilities_subject, list_true_stages):
     """
@@ -534,6 +646,8 @@ def calculate_kappa(list_probabilities_subject, list_true_stages):
 
 
 def plot_cm(list_probabilities_subject, list_true_stages, model_name):
+
+    return
     """
     Plot the confusion matrix of a model's prediction.
 
@@ -586,6 +700,7 @@ def plot_cm(list_probabilities_subject, list_true_stages, model_name):
 def plot_by_subject_predicted_labels(
     sid, features, predicted_df, sigma=10, show_label=True
 ):
+    return
     sid_df = pd.read_csv(
         "/features_df/{}_domain_features_df.csv".format(
             sid
@@ -719,3 +834,122 @@ def plot_by_subject_predicted_labels(
         ax3.legend()
 
     plt.savefig("./Figures/{}_SvW_GPBoost_corrected_by_LSTM.png".format(sid))
+
+def calculate_class_ratios(true_labels_list):
+    """
+    Calculate class distribution ratios from a list of label arrays.
+    
+    Args:
+        true_labels_list (list): List of numpy arrays containing labels
+        
+    Returns:
+        dict: Dictionary containing class counts and ratios
+    """
+    # Concatenate all labels and convert to int type
+    all_labels = np.concatenate(true_labels_list).astype(int)
+    
+    # Calculate class counts
+    unique, counts = np.unique(all_labels, return_counts=True)
+    total_samples = len(all_labels)
+    
+    # Calculate class ratios
+    class_ratios = {cls: count/total_samples for cls, count in zip(unique, counts)}
+    
+    logger.info(f"Class distribution - Total samples: {total_samples}")
+    for cls, ratio in class_ratios.items():
+        logger.info(f"Class {cls}: {ratio:.3f}")
+        
+    return class_ratios
+
+def find_optimal_threshold(
+    model: torch.nn.Module,
+    dataloader_val: DataLoader,
+    device: torch.device,
+    metric: str = 'f1'
+) -> float:
+    """
+    Find the optimal classification threshold on the validation set.
+
+    Args:
+        model (torch.nn.Module): The trained PyTorch model.
+        dataloader_val (DataLoader): DataLoader for the validation set.
+        device (torch.device): The device to run evaluation on (e.g., 'cuda:0').
+        metric (str): The metric to optimize ('f1' or 'pr_auc' - though PR AUC is threshold-independent).
+                      Currently optimizes F1.
+
+    Returns:
+        float: The threshold that maximizes the chosen metric on the validation set.
+    """
+    logger.info(f"Finding optimal threshold using '{metric}' metric on validation set")
+    model.eval()
+    all_probs = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch in dataloader_val:
+            sample = batch["sample"].to(device, non_blocking=True)
+            length = batch["length"]
+            label = batch["label"].to(device, non_blocking=True)
+
+            if sample.shape[0] == 0 or sample.shape[1] == 0:
+                continue
+
+            y_pred = model(sample, length)
+
+            # Assuming binary classification and output is (N, SeqLen, 2) or similar
+            # Flatten and get probabilities for the positive class (class 1)
+            # Handle potential padding (-100) if necessary
+            y_pred_flat = y_pred.view(-1, y_pred.shape[-1])
+            label_flat = label.view(-1)
+
+            valid_mask = (label_flat != -100) # Example mask for padding
+            y_pred_valid = y_pred_flat[valid_mask]
+            label_valid = label_flat[valid_mask]
+
+            if y_pred_valid.shape[0] > 0:
+                # Get probabilities for the positive class (index 1)
+                probs = torch.softmax(y_pred_valid, dim=1)[:, 1].cpu().numpy()
+                all_probs.append(probs)
+                all_labels.append(label_valid.cpu().numpy())
+
+    if not all_labels:
+        logger.warning("No valid labels found in validation set for threshold optimization. Returning 0.5.")
+        return 0.5
+
+    all_probs = np.concatenate(all_probs)
+    all_labels = np.concatenate(all_labels)
+
+    if metric == 'f1':
+        precision, recall, thresholds = precision_recall_curve(all_labels, all_probs)
+        # Calculate F1 score for each threshold, avoiding division by zero
+        f1_scores = np.divide(2 * precision * recall, precision + recall,
+                              out=np.zeros_like(precision), where=(precision + recall) != 0)
+
+        # The last threshold corresponds to predicting only the negative class (recall=0)
+        # The first threshold corresponds to predicting only the positive class (precision might be low)
+        # We typically ignore the edge cases where precision or recall is 0 unless it's the only option
+        valid_idx = np.where((precision + recall) > 0)[0]
+        if len(valid_idx) == 0:
+             logger.warning("Could not find any threshold with non-zero precision/recall. Returning 0.5.")
+             return 0.5
+
+        best_idx = valid_idx[np.argmax(f1_scores[valid_idx])]
+        optimal_threshold = thresholds[best_idx]
+        logger.info(f"Optimal F1 threshold found: {optimal_threshold:.4f} (F1: {f1_scores[best_idx]:.4f})")
+
+    # Add other metrics like G-mean if needed
+    # elif metric == 'gmean':
+    #     fpr, tpr, thresholds = roc_curve(all_labels, all_probs)
+    #     gmeans = np.sqrt(tpr * (1-fpr))
+    #     best_idx = np.argmax(gmeans)
+    #     optimal_threshold = thresholds[best_idx]
+    #     logger.info(f"Optimal G-mean threshold found: {optimal_threshold:.4f} (G-mean: {gmeans[best_idx]:.4f})")
+
+    else:
+        logger.warning(f"Unsupported metric '{metric}' for threshold optimization. Defaulting to 0.5.")
+        optimal_threshold = 0.5
+
+    # Ensure threshold is within a reasonable range (e.g., handle edge cases from precision_recall_curve)
+    optimal_threshold = max(min(optimal_threshold, 0.999), 0.001)
+
+    return float(optimal_threshold)
