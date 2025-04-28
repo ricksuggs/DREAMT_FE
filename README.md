@@ -90,13 +90,9 @@ The main components of the project pipeline includes:
 
 `participant_info.csv` is the csv file containing the basic information of the participant. 
 
-`cpap_analysis.py` is a module that takes in the data and output the breathing information of each patient. The result will be outputed into a json file with patient number as file name.  
-
 `quality_score_per_subject.csv`: is a file summarizing the percentage of artifacts of each subject's data calculated from features dataframe `sid_domain_features_df.csv`.   
 
 `read_raw_e4.py` is a module that read raw Empatica E4 data, sleeps stage label, and sleep report to generate a dataframe that aligns the Empatica E4 data with sleep stage and sleep performance, such as Apnea-Hypopnea Index, by time.  
-
-`read_raw_PSG.py` is a module that read raw polysomnography (PSG) data and extract the data during Empatica E4 recording.  
 
 `feature_engineering.py` is a module that read the processed data by `read_raw_e4.py` and perform feature engineering on the data. The result data is stored in `feature_df` in `data`. 
 
@@ -107,3 +103,5 @@ The main components of the project pipeline includes:
 `main.py` is a module that run the entire process of data loading, cleaning, splitting, model building, training, testing and evaluating.  
 
 `utils.py` is a script that contains all the helper functions for data loading, cleaning, splitting, model building, training, testing, and evaluating.
+
+`compile_aggregate.py` is a script that aggregates data from the 5-fold cross-validation run to display in a report.
