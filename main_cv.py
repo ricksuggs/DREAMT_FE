@@ -42,7 +42,7 @@ logging.info(SW_df.Sleep_Stage.value_counts())
 kf = KFold(n_splits=5, shuffle=True, random_state=0)
 
 group_variables = ["AHI_Severity", "Obesity"]
-group_variable = get_variable(group_variables, idx=0)
+group_variable = get_variable(group_variables, idx=1)
 logging.info(len(final_features))
 result_dfs = []
 
