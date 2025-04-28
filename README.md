@@ -6,6 +6,8 @@ Reference:
 
 Wang, W.K., Yang, J., Hershkovich, L., Jeong, H., Chen, B., Singh, K., Roghanizad, A.R., Shandhi, M.M.H., Spector, A.R. &amp; Dunn, J.. (2024). Addressing Wearable Sleep Tracking Inequity: A New Dataset and Novel Methods for a Population with Sleep Disorders. <i>Proceedings of the fifth Conference on Health, Inference, and Learning</i>, in <i>Proceedings of Machine Learning Research</i> 248:380-396 Available from https://proceedings.mlr.press/v248/wang24a.html.
 
+Original code repository for the paper: https://github.com/WillKeWang/DREAMT_FE
+
 The motivation for this repository is a replication of the paper's results, and to experiment with some ablations and extensions for academic purposes:
 
 1. Replace LSTM post-processing with Transformer post-processing
