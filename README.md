@@ -58,20 +58,25 @@ The main components of the project pipeline includes:
 
 ```bash
 .
-├── dataset_sample
-    └── features_df
-        └── SID_domain_features.csv
-    └── E4_aggregate_subsample
-        └── subsampled_SID_whole_df.csv
-    └── participant_info.csv
-├── results
-│   └── quality_score_per_subject.csv
-├── read_raw_e4.py
 ├── calculate_quality_score.py
-├── feature_engineering.py
+├── compile_aggregate.py
+├── dataset_sample
+│   ├── E4_aggregate_subsample
+│   │   └── subsampled_SID_whole_df.csv
+│   ├── features_df
+│   │   └── subsampled_SID_whole_df.csv
+│   └── participant_info.csv
 ├── datasets.py
-├── models.py
+├── experiments.ipynb
+├── feature_engineering.py
 ├── main.py
+├── main_cv.py
+├── models.py
+├── read_raw_e4.py
+├── requirements.frozen.txt
+├── requirements.txt
+├── results
+│   ├── quality_scores_per_subject.csv
 └── utils.py
 
 ```
