@@ -1,9 +1,19 @@
-# DREAMT: Dataset for Real-time sleep stage EstimAtion using Multisensor wearable Technology
+# Sleep Tracking with Wearables on Small, Diverse Datasets: A Study of Modeling Choices
+
+This repository is a fork of the source code for the paper _Addressing Wearable Sleep Tracking Inequity: A New Dataset and Novel Methods for a Population with Sleep Disorders_, by Will Ke Wang, et al, published in Proceedings of the Fifth Conference on Health, Inference, and Learning, PMLR 248:380-396, 2024.
+
+Reference:
+
+Wang, W.K., Yang, J., Hershkovich, L., Jeong, H., Chen, B., Singh, K., Roghanizad, A.R., Shandhi, M.M.H., Spector, A.R. &amp; Dunn, J.. (2024). Addressing Wearable Sleep Tracking Inequity: A New Dataset and Novel Methods for a Population with Sleep Disorders. <i>Proceedings of the fifth Conference on Health, Inference, and Learning</i>, in <i>Proceedings of Machine Learning Research</i> 248:380-396 Available from https://proceedings.mlr.press/v248/wang24a.html.
+
+The motivation for this repository is a replication of the paper's results, and to experiment with some ablations and extensions for academic purposes:
+
+1. Replace LSTM post-processing with Transformer post-processing
+2. Use focal loss in place of cross-entropy loss in LSTM post-processing
 
 ## Directory Structure
 
 The main components of the project pipeline includes: 
-* Extracting data from the raw data
 * Perform preprocessing and feature enginering on the data
 * Training models for classification
 
@@ -30,9 +40,39 @@ The main components of the project pipeline includes:
 ## Setup
 
 1. Clone this repository.
-2. Create a Conda environment from `.yml` file.
+2. Create a python virtual environment with python 3.10
+```sh
+    python -m venv .venv
 ```
-conda env create --file environment.yml
+3. Install the dependencies
+```sh
+    pip install -r requirements.txt
+```
+
+## Execution
+
+### Run the data preparation pipeline and extract features
+1. Download the dataset from https://physionet.org/content/dreamt/2.0.0/
+2. Update `data_folder` in `feature_engineering.py:1387` to `data_64hz` folder in download
+3. Run feature engineering script
+```sh
+    # Expected execution time: ~ 13 hours
+    python feature_engineering.py
+``` 
+4. Feature dataframes will be regenerated in `dataset_sample/features_df`
+5. Run the calculate quality scores script
+```sh
+    python calculate_quality_score.py
+```
+6. Run the training and evaulation pipeline without 5-fold cross validation
+```sh
+    # Expected execution time: ~ 1 hour
+    python main.py
+```
+7. Run the training and pipeline with 5-fold cross-validation
+```sh
+    # Expected execution time: ~ 5 hours
+    python main_cv.py
 ```
 
 ## Description
@@ -60,4 +100,4 @@ conda env create --file environment.yml
 
 `main.py` is a module that run the entire process of data loading, cleaning, splitting, model building, training, testing and evaluating.  
 
-`utils.py` is a script that contains all the helper functions for data loading, cleaning, splitting, model building, training, testing, and evaluating.  
+`utils.py` is a script that contains all the helper functions for data loading, cleaning, splitting, model building, training, testing, and evaluating.
