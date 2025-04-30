@@ -151,7 +151,7 @@ HRV_feature_names = [
 
 
 def exclude_signal(segment_df, plot=False, print_scores=False):
-    # logging.info("Excluding signal artifacts")
+    logging.debug("Excluding signal artifacts")
     """Identify is a segment is to be labeled as 'artifact'
 
     Parameters
@@ -270,7 +270,7 @@ def exclude_signal(segment_df, plot=False, print_scores=False):
 
 
 def circadian_cosine(ts, samp_freq=64):
-    logging.info("Calculating circadian cosine features")
+    logging.debug("Calculating circadian cosine features")
     """
     Use the timestamp information to caluclate circadian related features,
     with a cosine function.
@@ -294,7 +294,7 @@ def circadian_cosine(ts, samp_freq=64):
 
 
 def circadian_decay(ts, samp_freq=64):
-    logging.info("Calculating circadian decay features")
+    logging.debug("Calculating circadian decay features")
     """
     Use the timestamp information to caluclate circadian related features,
     with a decay model, or exponential decay function.
@@ -319,7 +319,7 @@ def circadian_decay(ts, samp_freq=64):
 
 
 def circadian_linear(ts, samp_freq=64):
-    logging.info("Calculating circadian linear features")
+    logging.debug("Calculating circadian linear features")
     """
     Use the timestamp information to caluclate circadian related features,
     with a linear function.
@@ -343,7 +343,7 @@ def circadian_linear(ts, samp_freq=64):
 
 
 def preprocess_BVP(bvp):
-    logging.info("Preprocessing BVP signal")
+    logging.debug("Preprocessing BVP signal")
     """
     Preprocess a time series of blood volume pulse signal from Empatica E4.
 
@@ -371,7 +371,7 @@ def preprocess_BVP(bvp):
 
 
 def preprocess_ACC(acc):
-    logging.info("Preprocessing ACC signal")
+    logging.debug("Preprocessing ACC signal")
     """
     Preprocess an array of accelerometry signal coming from Empatica E4.
 
@@ -391,7 +391,7 @@ def preprocess_ACC(acc):
 
 
 def preprocess_EDA(eda):
-    logging.info("Preprocessing EDA signal")
+    logging.debug("Preprocessing EDA signal")
     """
     Preprocess an array of electrodermal activity signal coming from Empatica E4.
 
@@ -456,7 +456,7 @@ def preprocess_EDA(eda):
 
 
 def clean_IBI(df, freq=64):
-    logging.info("Cleaning IBI signal")
+    logging.debug("Cleaning IBI signal")
     """
     Preprocess the Inter-Beat Interval (IBI) signal from Empatica E4.
 
@@ -474,7 +474,7 @@ def clean_IBI(df, freq=64):
     """
 
     def detect_motion_artifact(df, window_seconds=10, freq=64):
-        logging.info("clean_IBI: Detecting motion artifacts")
+        logging.debug("clean_IBI: Detecting motion artifacts")
         window = window_seconds * freq
         acc_x = df.ACC_X.to_numpy()
         acc_x_diff = np.diff(acc_x)
@@ -499,7 +499,7 @@ def clean_IBI(df, freq=64):
         return ma_flag_array
 
     def filter_close_peaks(peaks, min_distance):
-        logging.info("clean_IBI: Filtering close peaks")
+        logging.debug("clean_IBI: Filtering close peaks")
         filtered_peaks = [peaks[0]]
         for peak in peaks[1:]:
             if peak - filtered_peaks[-1] > min_distance:
@@ -520,7 +520,7 @@ def clean_IBI(df, freq=64):
 
     # detect peaks
     widths = np.arange(2, 32)
-    logging.info("clean_IBI: Detecting peaks")
+    logging.debug("clean_IBI: Detecting peaks")
     peaks = find_peaks_cwt(bvp, widths, window_size=16)
     peaks = filter_close_peaks(peaks, min_distance=12)
 
@@ -562,7 +562,7 @@ def clean_IBI(df, freq=64):
 
 
 def preprocess_TIMESTAMPS(ts):
-    logging.info("Preprocessing TIMESTAMPS")
+    logging.debug("Preprocessing TIMESTAMPS")
     """
     Obtain all three circadian information
 
@@ -587,7 +587,7 @@ def preprocess_TIMESTAMPS(ts):
 
 
 def preprocess_ALL_SIGNALS(df):
-    logging.info("Preprocessing all signals")
+    logging.debug("Preprocessing all signals")
     """
     Preprocess all available signals from a dataset from Empatica E4
 
@@ -636,7 +636,7 @@ def preprocess_ALL_SIGNALS(df):
 
 
 def acc_trimmed_summary(acc):
-    # logging.info("Calculating ACC trimmed summary")
+    logging.debug("Calculating ACC trimmed summary")
     """
     Calculate mean, max, and IQR of the trimmed accelerometer signal
 
@@ -666,7 +666,7 @@ def acc_trimmed_summary(acc):
 
 
 def MAD_trimmed_summary(acc, segment_seconds=30):
-    # logging.info("Calculating MAD trimmed summary")
+    logging.debug("Calculating MAD trimmed summary")
     """
     Calculate mean, max, and IQR of the mean amplitude deviation (MAD) accelerometer signal
 
@@ -703,7 +703,7 @@ def MAD_trimmed_summary(acc, segment_seconds=30):
 
 
 def ACC_summary(segment_df):
-    # logging.info("Calculating ACC summary")
+    logging.debug("Calculating ACC summary")
     """
     compute summary statistics for the accelerometer signal
 
@@ -824,7 +824,7 @@ def ACC_summary(segment_df):
 
 
 def TEMP_summary(segment_df):
-    # logging.info("Calculating TEMP summary")
+    logging.debug("Calculating TEMP summary")
     """
     Compute summary statistics for the temperature signal
 
@@ -868,7 +868,7 @@ def TEMP_summary(segment_df):
 
 
 def HRV_summary(segment_df, segment_seconds=30, freq=64):
-    # logging.info("Calculating HRV summary")
+    logging.debug("Calculating HRV summary")
     """
     Compute summary statistics for the Heart Rate Variability (HRV) signal
 
@@ -955,7 +955,7 @@ def HRV_summary(segment_df, segment_seconds=30, freq=64):
 
 
 def EDA_summary(segment_df):
-    # logging.info("Calculating EDA summary")
+    logging.debug("Calculating EDA summary")
     """
     Compute summary statistics for the Electrodermal Activity (EDA) signal
 
@@ -1036,7 +1036,7 @@ def EDA_summary(segment_df):
 
 
 def circadian_features(segment_df):
-    # logging.info("Calculating circadian features")
+    logging.debug("Calculating circadian features")
     """
     Compute circadian features from the timestamp information
     
@@ -1060,7 +1060,7 @@ def circadian_features(segment_df):
 
 
 def aggregate_labels(segment_df, segment_seconds=30):
-    # logging.info("Aggregating labels")
+    logging.debug("Aggregating labels")
     """
     Aggregate labels for the segment
 
@@ -1104,7 +1104,7 @@ def aggregate_labels(segment_df, segment_seconds=30):
 
 
 def fe_per_segment(segment_df, segment_seconds=30):
-    # logging.info("Calculating features per segment")
+    logging.debug("Calculating features per segment")
     """
     Compute features for a segment of E4 data
 
@@ -1374,8 +1374,8 @@ def test_fe_all_subjects(info_dir, data_folder, save_folder_dir):
             extract_domain_features(
                 sid, data_folder=data_folder, segment_seconds=30, save_folder_dir= save_folder_dir
             )
-        except:
-            print("ERROR")
+        except Exception as e:
+            print(f"Error for subject {sid}: {e}")
             error_sids.append(sid)
     return error_sids
 
@@ -1385,7 +1385,7 @@ def main():
     error_sids = test_fe_all_subjects(
         info_dir="dataset_sample/participant_info.csv",
         data_folder="../dreamt_data/dreamt-dataset-for-real-time-sleep-stage-estimation-using-multisensor-wearable-technology-2.0.0/data_64Hz",
-        save_folder_dir="./fe_dataframes_whole_study/",
+        save_folder_dir="dataset_sample/features_df/",
     )
     logging.info("Main function completed")
     return 0
