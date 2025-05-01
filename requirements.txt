@@ -34,3 +34,4 @@ neurokit2
 aeon
 tsai==0.4.0
 ipykernel
+graphviz
